@@ -106,11 +106,13 @@ start)
 	[ -n "$log" ] || log=/var/log/maillog
 	mkdir -p "$(dirname "$log")"
 	[ "$VERBOSE" -ge 1 ] && err "exec: $MASTER -c $CONFIG_DIR -d  (log: $log)"
-	# </dev/null so master shares no stream with a supervising pipe: the install
-	# harness reads phase-2 output through a pipe, and a daemon that keeps it open
-	# would stall the harness at exit. All three std streams go to the maillog or
-	# /dev/null; the daemon holds nothing the parent is waiting to drain.
-	nohup "$MASTER" -c "$CONFIG_DIR" -d >>"$log" 2>&1 </dev/null &
+	# Fully detach master from the caller. setsid puts it in its own session with
+	# no controlling terminal; the redirects give it maillog/dev-null for all three
+	# std streams. Without the new session, an install run captured under `script`
+	# (or any pty) keeps that pty open through master and never sees EOF, so the
+	# whole run hangs long after the MTA is already up. The std fds alone were
+	# already clean here; the session was the missing piece.
+	setsid "$MASTER" -c "$CONFIG_DIR" -d >>"$log" 2>&1 </dev/null &
 	sleep 2
 	if is_running; then
 		say "postfix started ($CONFIG_DIR, pid $(master_pid))"
