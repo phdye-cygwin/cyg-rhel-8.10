@@ -100,16 +100,33 @@ if [ "$DEBUG" = 1 ]; then set -x; fi
 say "postfix-user-setup: owner=$OWNER group=$GROUP config=$CONFIG_DIR port=$SMTP_PORT"
 
 # 0. Cygwin identity. Without /etc/passwd, a login shell resolves HOME to your
-#    Windows profile, so mintty and cron land in the wrong home. Generate
-#    passwd/group for the CURRENT account (works for local and domain users; -l
-#    would miss a domain account). Guarded on /etc/passwd so it runs once on a
-#    fresh tree and never disturbs a configured tree or the test's host.
+#    Windows profile, so mintty and cron land in the wrong home. Enumerate the
+#    LOCAL accounts first: on most machines that pulls in nobody and any service
+#    accounts the config below leans on. A domain user is not a local account,
+#    so it won't appear under -l; append its entry with -c when it is missing.
+#    Guarded on /etc/passwd so it runs once on a fresh tree and never disturbs a
+#    configured tree or the test's host.
 if [ ! -f /etc/passwd ]; then
-	mkpasswd -c -p /home > /etc/passwd
-	[ -f /etc/group ] || mkgroup -c > /etc/group
+	mkpasswd -l -p /home > /etc/passwd
+	grep -q "^$(id -un):" /etc/passwd || mkpasswd -c -p /home >> /etc/passwd
+	if [ ! -f /etc/group ]; then
+		mkgroup -l > /etc/group
+		grep -q "^$(id -gn):" /etc/group || mkgroup -c >> /etc/group
+	fi
 	mkdir -p "/home/$OWNER"
 	chown "$OWNER":"$GROUP" "/home/$OWNER" 2>/dev/null || true
 	say "postfix-user-setup: generated /etc/passwd and /etc/group"
+fi
+
+# 0a. Postfix's default_privs is 'nobody', which must exist and differ from
+#     mail_owner. On a domain-joined machine neither -l nor -c is guaranteed to
+#     emit a nobody entry, so add a synthetic low-privilege account when it is
+#     still missing. Runs every time (idempotent), since /etc/passwd may already
+#     exist from an earlier run.
+if [ -f /etc/passwd ] && ! grep -q '^nobody:' /etc/passwd; then
+	printf 'nobody:*:65534:65534:nobody:/nonexistent:/sbin/nologin\n' >> /etc/passwd
+	grep -q '^nobody:' /etc/group 2>/dev/null || printf 'nobody:*:65534:\n' >> /etc/group
+	say "postfix-user-setup: added a nobody account for default_privs"
 fi
 
 # 1. Directories, owned by the running user. Seed main.cf/master.cf from the
@@ -134,7 +151,6 @@ postconf -c "$CONFIG_DIR" -e \
 	"data_directory = $DATA_DIR" \
 	"mail_owner = $OWNER" \
 	"setgid_group = $GROUP" \
-	"default_privs = $OWNER" \
 	"command_directory = /usr/sbin" \
 	"daemon_directory = /usr/libexec/postfix" \
 	"mail_spool_directory = $MAILBOX_DIR/" \
