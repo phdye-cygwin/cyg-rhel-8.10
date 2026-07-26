@@ -31,10 +31,12 @@ crosses through `cmd.exe`. Both sidestep the deadlock you would hit launching a
 replica binary straight from another Cygwin shell, where two `cygwin1.dll`
 instances collide.
 
-To capture a full log of a run, pass `install-all.ps1 -Log C:\path\to.log` (the
-analog of Cygwin's `script`); it transcribes the run and folds in setup.log.full
-and the phase-2 output. From a Cygwin shell, wrap `./install-all.sh` with
-`script` as usual.
+To capture a full log of a run, pass `install-all.ps1 -Log <path>` (the analog of
+Cygwin's `script`); it transcribes the run and folds in setup.log.full and the
+phase-2 output. Point it at a writable location such as your home directory --
+`C:\` root usually is not writable to a standard user, and the transcript then
+goes nowhere. From a Cygwin shell, wrap `./install-all.sh` with `script` as
+usual.
 
 Prefer to run the phases yourself? The same steps by hand:
 

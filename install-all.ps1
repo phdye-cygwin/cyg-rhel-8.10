@@ -34,11 +34,36 @@ $Here = $PSScriptRoot
 # file. A transcript can miss a native child's own console output, so on the way
 # out we also fold in setup.log.full and the phase-2 runner log (see Stop-Log and
 # the end of the run), making the capture complete.
-function Stop-Log { if ($Log) { try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {} } }
+function Stop-Log {
+  if ($Log) {
+    try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+    if (-not (Test-Path $Log)) {
+      Write-Host "note: -Log was requested but no file appeared at $Log; capture with Cygwin 'script' instead."
+    }
+  }
+}
 if ($Log) {
+  # Pick a writable path up front by actually probe-writing the target dir.
+  # Start-Transcript is not a reliable signal: on a protected path (C:\ root,
+  # C:\Windows) it can report success and write nothing. If the target is not
+  # writable, redirect to TEMP so a run always leaves a capture.
+  $logDir = [IO.Path]::GetDirectoryName($Log); if (-not $logDir) { $logDir = (Get-Location).Path }
+  $canWrite = $false
+  try {
+    New-Item -ItemType Directory -Force -Path $logDir -ErrorAction Stop | Out-Null
+    $probe = Join-Path $logDir ('.logprobe-' + $PID)
+    Set-Content -Path $probe -Value 'x' -ErrorAction Stop
+    Remove-Item $probe -Force -ErrorAction SilentlyContinue
+    $canWrite = $true
+  } catch {}
+  if (-not $canWrite) {
+    $alt = Join-Path $env:TEMP ([IO.Path]::GetFileName($Log))
+    Write-Host "note: -Log directory $logDir is not writable; logging to $alt instead"
+    $Log = $alt
+  }
   try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
   try { Start-Transcript -Path $Log -Force -ErrorAction Stop | Out-Null; Write-Host "logging to $Log" }
-  catch { Write-Host "warning: transcript unavailable: $($_.Exception.Message)" }
+  catch { Write-Host "warning: could not start transcript at $Log ($($_.Exception.Message)); capture with Cygwin 'script' instead."; $Log = '' }
 }
 
 # Base is the primary knob: root and pkg-dir sit under it. An explicit -Root
