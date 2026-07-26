@@ -205,11 +205,17 @@ if (-not (Test-Writable $PkgDir)) {
   if (-not (Test-Path $NewBash)) {
     $sl = [IO.Path]::Combine($Root, 'var\log\setup.log.full')
     if ((Test-Path $sl) -and ((Get-Content $sl -Raw -ErrorAction SilentlyContinue) -match 'Visited: 0 nodes')) {
-      throw ("setup ran but selected 0 packages: it could not load the package list from the " +
-             "snapshot mirror $Snapshot. That host is often blocked by corporate web filtering. " +
-             "Confirm with:  Invoke-WebRequest '$Snapshot/x86_64/setup.xz' -Method Head . " +
-             "If it is blocked, stage the package cache where the mirror is reachable, copy it " +
-             "into $PkgDir, and install from there.")
+      $siteTried = (Get-Content $sl -Raw -ErrorAction SilentlyContinue) -match '(?m)^\s*site:'
+      throw ("setup ran but selected 0 packages -- it never loaded the package index. " +
+             (if ($siteTried) {
+                "It reached a site but resolved nothing; the snapshot mirror $Snapshot may be " +
+                "blocked or incomplete (confirm: Invoke-WebRequest '$Snapshot/x86_64/setup.xz' -Method Head). "
+              } else {
+                "Its log shows no 'site:' line, so this setup did a LOCAL install and never went to " +
+                "the network -- typical of an older setup that ignores -s. "
+              }) +
+             "Fixes: use the current setup-x86_64.exe (delete the one in $PkgDir so it re-downloads), " +
+             "or pre-stage the full package cache into $PkgDir and install offline.")
     } elseif (Test-Path $sl) {
       throw "setup ran but produced no tree; see $sl (tail in the diagnostics below)."
     } else {
