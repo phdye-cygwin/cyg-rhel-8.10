@@ -6,6 +6,34 @@ the Postfix 3.5.8 MTA, and the Heirloom mailx client. The one capability it need
 beyond a plain login is a writable target directory. Developer Mode (for native
 symlinks) is a convenience, not a requirement.
 
+## Quick start
+
+You need an existing Cygwin `setup-x86_64.exe` on the machine, a writable
+directory, and no administrator rights. Clone the repo, then:
+
+```sh
+# 1. Install the Cygwin tree into C:\cyg-rhel-8.10 (no admin). Finds
+#    setup-x86_64.exe automatically. --dry-run previews; --help lists options.
+./install-rhel810-noadmin.sh
+
+# 2. From the new replica's bash (C:\cyg-rhel-8.10\cygwin64\bin\bash.exe):
+bin/install-packages.sh            # unpack Postfix 3.5.8 + Heirloom mailx
+bin/postfix-user-setup.sh          # configure Postfix to run as you
+bin/postfix-user-launch.sh start   # start the mail system now
+
+# 3. From PowerShell, optional: start at each logon, add a terminal shortcut.
+.\bin\install-logon-task.ps1
+.\bin\install-mintty-shortcut.ps1
+
+# 4. From the replica's bash: verify end to end (safe on a running instance).
+./test/test-unprivileged-postfix.sh
+```
+
+Every command takes `-h`/`--help`, and each option also has an environment
+variable. The sections below explain each step and the design.
+
+## How it works
+
 The usual way to run this stack registers Postfix, sshd, and cron as Windows
 services under a dedicated account that csih creates, which needs administrator
 rights. This build does none of that and needs none of it. Postfix runs directly
@@ -25,7 +53,7 @@ already there). A writable base directory; the scripts default to
 and package cache in `packages\`.
 Network access to the Time Machine snapshot. No administrator rights.
 
-## Build
+## What each step does
 
 Install the tree. `install-rhel810-noadmin.sh` runs setup with `--no-admin` from
 the 2019-08-01 snapshot into the target root. It finds the newest
