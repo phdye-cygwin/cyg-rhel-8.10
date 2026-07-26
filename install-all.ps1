@@ -177,6 +177,17 @@ if (-not (Test-Writable $PkgDir)) {
   # it clears that class of block. Harmless when there is no tag.
   try { Unblock-File -LiteralPath $SetupExe -ErrorAction SilentlyContinue } catch {}
 
+  # Reachability preflight: setup pulls its package index from the snapshot
+  # mirror. That host is often blocked by corporate web filtering, so warn early
+  # -- otherwise a later "0 packages" result looks like a mystery.
+  try {
+    Invoke-WebRequest -Uri "$Snapshot/x86_64/setup.xz" -Method Head -UseBasicParsing -TimeoutSec 20 | Out-Null
+  } catch {
+    Write-Host "warning: snapshot mirror not reachable ($Snapshot)"
+    Write-Host "         reason: $($_.Exception.Message)"
+    Write-Host "         unless packages are already staged in $PkgDir, setup will install nothing."
+  }
+
   Write-Host "== phase 1: install the Cygwin tree (no admin) =="
   try {
     $p = Start-Process -FilePath $SetupExe -ArgumentList $setupArgs -Wait -NoNewWindow -PassThru
@@ -189,10 +200,19 @@ if (-not (Test-Writable $PkgDir)) {
   }
   if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode); see $Root\var\log\setup.log.full" }
   if (-not (Test-Path $NewBash)) {
-    throw ("setup returned success but produced no tree (no $NewBash). On a locked-down box " +
-           "this usually means security software blocked the freshly downloaded setup, or this " +
-           "machine's Cygwin cannot run a current setup; try -SetupExe with the setup-x86_64.exe " +
-           "already installed here.")
+    $sl = [IO.Path]::Combine($Root, 'var\log\setup.log.full')
+    if ((Test-Path $sl) -and ((Get-Content $sl -Raw -ErrorAction SilentlyContinue) -match 'Visited: 0 nodes')) {
+      throw ("setup ran but selected 0 packages: it could not load the package list from the " +
+             "snapshot mirror $Snapshot. That host is often blocked by corporate web filtering. " +
+             "Confirm with:  Invoke-WebRequest '$Snapshot/x86_64/setup.xz' -Method Head . " +
+             "If it is blocked, stage the package cache where the mirror is reachable, copy it " +
+             "into $PkgDir, and install from there.")
+    } elseif (Test-Path $sl) {
+      throw "setup ran but produced no tree; see $sl (tail in the diagnostics below)."
+    } else {
+      throw ("setup produced no tree and wrote no log: it likely could not launch (application " +
+             "control/AppLocker) or faulted. Use -SetupExe with an IT-approved setup-x86_64.exe.")
+    }
   }
 
   # Phase 2: a bash runner executed by the NEW tree's bash. REPO is baked in as a
