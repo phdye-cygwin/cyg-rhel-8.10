@@ -159,6 +159,20 @@ postconf -c "$CONFIG_DIR" -MX "127.0.0.1:$SMTP_PORT/inet" 2>/dev/null || true
 postconf -c "$CONFIG_DIR" -M -e \
 	"127.0.0.1:$SMTP_PORT/inet = 127.0.0.1:$SMTP_PORT inet n - n - - smtpd"
 
+# 3a. Aliases. local_recipient_maps consults alias_maps at RCPT time, so a
+#     missing alias database rejects every local recipient with a 451. RHEL
+#     keeps this at /etc/aliases; the Cygwin postfix package ships
+#     /etc/postfix/aliases instead. Seed the RHEL path from it (or a stub) and
+#     build the .db.
+if [ ! -f /etc/aliases ]; then
+	if [ -f /etc/postfix/aliases ]; then
+		cp /etc/postfix/aliases /etc/aliases
+	else
+		printf 'postmaster: %s\n' "$OWNER" > /etc/aliases
+	fi
+fi
+postalias hash:/etc/aliases
+
 # 4. Ownership. chown to yourself needs no privilege; it corrects files the tar
 #    unpack left with foreign owners.
 chown -R "$OWNER":"$GROUP" "$QUEUE_DIR" "$DATA_DIR" 2>/dev/null || true
@@ -167,7 +181,7 @@ chmod 700 "$DATA_DIR"
 # 5. sendmail shim -> smtpd, so mailx/cron/apps submit with no postdrop. The sed
 #    bakes the port into the installed copy so callers need no environment.
 if [ "$INSTALL_SENDMAIL" = "1" ]; then
-	install -m 0755 "$HERE/sendmail-smtp-shim" /usr/local/sbin/sendmail-smtp-shim
+	install -D -m 0755 "$HERE/sendmail-smtp-shim" /usr/local/sbin/sendmail-smtp-shim
 	sed -i "s/\"SENDMAIL_SMTP_PORT\", \"[0-9]*\"/\"SENDMAIL_SMTP_PORT\", \"$SMTP_PORT\"/" \
 		/usr/local/sbin/sendmail-smtp-shim
 	ln -sf /usr/local/sbin/sendmail-smtp-shim /usr/sbin/sendmail
