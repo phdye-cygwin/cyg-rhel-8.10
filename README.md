@@ -28,9 +28,11 @@ Network access to the Time Machine snapshot. No administrator rights.
 ## Build
 
 Install the tree. `install-rhel810-noadmin.sh` runs setup with `--no-admin` from
-the 2019-08-01 snapshot into the target root. To rehearse against a throwaway
-root first, set `REPLICA_ROOT` and `SETUP_DIR` to a scratch path, or `DRY_RUN=1`
-to print the command without running it.
+the 2019-08-01 snapshot into the target root. It finds the newest
+`setup-x86_64.exe` in the usual download spots (Downloads, Desktop) and copies it
+into the setup dir, so you need not pre-place it, or point `--setup-exe` at one.
+To rehearse first, add `--dry-run`. Every option also has an environment variable
+and the option wins; run `--help` for the full list.
 
 Install the built MTA. From inside the replica, `bin/install-packages.sh` unpacks
 the Postfix 3.5.8 and mailx packages from `packages/` and seeds `/etc/postfix`.
@@ -82,6 +84,15 @@ test/                         the isolated validation
 repo and what your Cygwin home is. The shell scripts derive the current user with
 `id -un`; edit the launch path in `start-postfix.cmd` and pass `PF_TEST_PREFIX`
 to the test if the defaults do not match your layout.
+
+## Command-line conventions
+
+Every shell command follows docopt: `-h`/`--help`, `--version`, `-v`/`-t`/`-d`
+for verbosity, `-n`/`--dry-run` where it has side effects, and a command-line
+option for each environment variable it reads (the option wins). Errors go to
+stderr with a non-zero exit; a bad option exits 2. The `sendmail-smtp-shim` is
+the exception: it keeps sendmail's own flag interface. The two `.ps1` helpers
+follow PowerShell parameter conventions (`-NoDesktop`, `-Remove`, `-Base`).
 
 ## Notes and limits
 
