@@ -23,7 +23,11 @@ Usage:
 
 Options:
   -R, --root DIR        Cygwin root, a Windows path [default: $DEF_ROOT]
+  -l, --setup-dir DIR   setup-x86_64.exe and package cache
+                        [default: <parent of root>\\packages]
   -e, --setup-exe PATH  setup-x86_64.exe to use (else auto-located)
+      --setup-url URL   where to download setup if none is found
+      --no-download     never download setup; fail if none is found locally
   -s, --snapshot URL    snapshot URL, passed to the installer
   -P, --packages LIST   package set, passed to the installer
       --no-start        configure Postfix but do not start it
@@ -44,8 +48,8 @@ die_usage() { err "$*"; exit 2; }
 say()       { [ "$TERSE" = 1 ] || printf '%s\n' "$*"; }
 
 ROOT=$DEF_ROOT
-SETUP_EXE= SNAPSHOT= PKGS=
-NO_START=0 WANT_SHORTCUT=0 WANT_LOGON=0
+SETUP_DIR= SETUP_EXE= SETUP_URL= SNAPSHOT= PKGS=
+NO_DOWNLOAD=0 NO_START=0 WANT_SHORTCUT=0 WANT_LOGON=0
 DRY_RUN=0 VERBOSE=0 TERSE=0 DEBUG=0
 
 while [ $# -gt 0 ]; do
@@ -53,8 +57,13 @@ while [ $# -gt 0 ]; do
 		--)              shift; break ;;
 		-R|--root)       ROOT=${2?missing value for $1}; shift 2 ;;
 		--root=*)        ROOT=${1#*=}; shift ;;
+		-l|--setup-dir)  SETUP_DIR=${2?missing value for $1}; shift 2 ;;
+		--setup-dir=*)   SETUP_DIR=${1#*=}; shift ;;
 		-e|--setup-exe)  SETUP_EXE=${2?missing value for $1}; shift 2 ;;
 		--setup-exe=*)   SETUP_EXE=${1#*=}; shift ;;
+		--setup-url)     SETUP_URL=${2?missing value for $1}; shift 2 ;;
+		--setup-url=*)   SETUP_URL=${1#*=}; shift ;;
+		--no-download)   NO_DOWNLOAD=1; shift ;;
 		-s|--snapshot)   SNAPSHOT=${2?missing value for $1}; shift 2 ;;
 		--snapshot=*)    SNAPSHOT=${1#*=}; shift ;;
 		-P|--packages)   PKGS=${2?missing value for $1}; shift 2 ;;
@@ -84,6 +93,9 @@ RUNNER_WIN="$ROOT\\tmp\\install-all-mta.sh"
 REPO_WIN=$(cygpath -w "$HERE")
 ROOT_POSIX=$(cygpath -u "$ROOT")
 BASE_WIN=$(cygpath -w "$(dirname "$ROOT_POSIX")")
+# Keep the package cache beside the tree, not at the installer's own default,
+# so a custom --root gets a matching cache instead of the stock location.
+[ -n "$SETUP_DIR" ] || SETUP_DIR="$BASE_WIN\\packages"
 
 vflag=
 [ "$VERBOSE" -ge 1 ] && vflag=--verbose
@@ -103,12 +115,14 @@ build_runner() {
 }
 
 # Pass-through args for the tree installer.
-inst=(--root "$ROOT")
-[ -n "$SETUP_EXE" ] && inst+=(--setup-exe "$SETUP_EXE")
-[ -n "$SNAPSHOT" ]  && inst+=(--snapshot "$SNAPSHOT")
-[ -n "$PKGS" ]      && inst+=(--packages "$PKGS")
-[ "$DRY_RUN" = 1 ]  && inst+=(--dry-run)
-[ -n "$vflag" ]     && inst+=("$vflag")
+inst=(--root "$ROOT" --setup-dir "$SETUP_DIR")
+[ -n "$SETUP_EXE" ]   && inst+=(--setup-exe "$SETUP_EXE")
+[ -n "$SETUP_URL" ]   && inst+=(--setup-url "$SETUP_URL")
+[ "$NO_DOWNLOAD" = 1 ] && inst+=(--no-download)
+[ -n "$SNAPSHOT" ]    && inst+=(--snapshot "$SNAPSHOT")
+[ -n "$PKGS" ]        && inst+=(--packages "$PKGS")
+[ "$DRY_RUN" = 1 ]    && inst+=(--dry-run)
+[ -n "$vflag" ]       && inst+=("$vflag")
 
 if [ "$DRY_RUN" = 1 ]; then
 	say "== phase 1: install the tree =="
