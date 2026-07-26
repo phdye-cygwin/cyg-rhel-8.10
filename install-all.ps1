@@ -8,8 +8,10 @@ the new tree's own bash to install and start the MTA -- safe, because PowerShell
 is a native parent, so there is no cygwin1.dll collision and no cmd bridge.
 #>
 param(
-  [string]$Root      = 'C:\cyg-rhel-8.10\cygwin64',
-  [string]$SetupDir  = '',
+  [string]$Base      = '',
+  [string]$Root      = '',
+  [Alias('SetupDir')]
+  [string]$PkgDir    = '',
   [string]$SetupExe  = '',
   [string]$SetupUrl  = 'https://cygwin.com/setup-x86_64.exe',
   [string]$Snapshot  = 'http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2019/08/01/131636',
@@ -23,7 +25,17 @@ param(
 $ErrorActionPreference = 'Stop'
 $Here = $PSScriptRoot
 
-if (-not $SetupDir) { $SetupDir = Join-Path (Split-Path $Root -Parent) 'packages' }
+# Base is the primary knob: root and pkg-dir sit under it. An explicit -Root
+# without -Base takes its base from the root's parent; otherwise the default
+# base wins. Explicit -Root and -PkgDir always override.
+# Use [IO.Path] rather than Join-Path/Split-Path: these are pure string ops, so
+# a -Base on a drive that is not mounted yet still resolves (Join-Path checks
+# the drive and throws).
+if (-not $Base) {
+  if ($Root) { $Base = [IO.Path]::GetDirectoryName($Root) } else { $Base = 'C:\cyg-rhel-8.10' }
+}
+if (-not $Root)   { $Root = [IO.Path]::Combine($Base, 'cygwin64') }
+if (-not $PkgDir) { $PkgDir = [IO.Path]::Combine($Base, 'packages') }
 if (-not $Packages) {
   $Packages = 'bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,libpq5,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
 }
@@ -32,7 +44,7 @@ function Find-SetupExe {
   $cands = @()
   $dirs = @((Join-Path $env:USERPROFILE 'Downloads'),
             (Join-Path $env:USERPROFILE 'Desktop'),
-            $env:USERPROFILE, $SetupDir)
+            $env:USERPROFILE, $PkgDir)
   foreach ($k in @('HKCU:\Software\Cygwin\setup','HKLM:\Software\Cygwin\setup')) {
     try { $c = (Get-ItemProperty -Path $k -Name 'last-cache' -EA Stop).'last-cache'; if ($c) { $dirs += $c } } catch {}
   }
@@ -46,23 +58,22 @@ function Find-SetupExe {
   ($cands | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
 }
 
-# Resolve which setup-x86_64.exe to use: explicit, else already in the setup
+# Resolve which setup-x86_64.exe to use: explicit, else already in the package
 # dir, else the newest found locally (copied in), else downloaded.
 $import = $null; $download = $null
 if (-not $SetupExe) {
-  $intended = Join-Path $SetupDir 'setup-x86_64.exe'
+  $intended = Join-Path $PkgDir 'setup-x86_64.exe'
   if (Test-Path $intended) { $SetupExe = $intended }
   else {
     $found = Find-SetupExe
     if ($found) { $import = $found; $SetupExe = $intended }
     elseif (-not $NoDownload) { $download = $SetupUrl; $SetupExe = $intended }
-    else { throw "no setup-x86_64.exe found; put one in $SetupDir, pass -SetupExe, or drop -NoDownload" }
+    else { throw "no setup-x86_64.exe found; put one in $PkgDir, pass -SetupExe, or drop -NoDownload" }
   }
 }
 
 $NewBash = Join-Path $Root 'bin\bash.exe'
-$Base    = Split-Path $Root -Parent
-$setupArgs = @('-q','-X','-n','-d','-N','--no-admin','-R',$Root,'-s',$Snapshot,'-l',$SetupDir,'-P',$Packages)
+$setupArgs = @('-q','-X','-n','-d','-N','--no-admin','-R',$Root,'-s',$Snapshot,'-l',$PkgDir,'-P',$Packages)
 
 if ($DryRun) {
   Write-Host "== phase 1: install the tree =="
@@ -79,8 +90,8 @@ if ($DryRun) {
   exit 0
 }
 
-New-Item -ItemType Directory -Force -Path $SetupDir | Out-Null
-$dest = Join-Path $SetupDir 'setup-x86_64.exe'
+New-Item -ItemType Directory -Force -Path $PkgDir | Out-Null
+$dest = Join-Path $PkgDir 'setup-x86_64.exe'
 if ($import)   { Copy-Item -Force $import $dest; Write-Host "imported setup: $import" }
 if ($download) { Write-Host "downloading setup from $download"; Invoke-WebRequest -Uri $download -OutFile $dest }
 if (-not (Test-Path $SetupExe)) { throw "setup program not found: $SetupExe" }

@@ -12,7 +12,7 @@ set -u
 PROG=${0##*/}
 VERSION='install-all 1.0'
 HERE=$(cd "$(dirname "$0")" && pwd)
-DEF_ROOT='C:\cyg-rhel-8.10\cygwin64'
+DEF_BASE='C:\cyg-rhel-8.10'
 
 usage() {
 	cat <<EOF
@@ -22,9 +22,11 @@ Usage:
   $PROG [options]
 
 Options:
-  -R, --root DIR        Cygwin root, a Windows path [default: $DEF_ROOT]
-  -l, --setup-dir DIR   setup-x86_64.exe and package cache
-                        [default: <parent of root>\\packages]
+  -b, --base DIR        base directory; root and pkg-dir sit under it
+                        [default: $DEF_BASE]
+  -R, --root DIR        Cygwin root, a Windows path [default: <base>\\cygwin64]
+  -l, --pkg-dir DIR     setup-x86_64.exe and package cache (alias --setup-dir)
+                        [default: <base>\\packages]
   -e, --setup-exe PATH  setup-x86_64.exe to use (else auto-located)
       --setup-url URL   where to download setup if none is found
       --no-download     never download setup; fail if none is found locally
@@ -47,18 +49,19 @@ die()       { err "$*"; exit 1; }
 die_usage() { err "$*"; exit 2; }
 say()       { [ "$TERSE" = 1 ] || printf '%s\n' "$*"; }
 
-ROOT=$DEF_ROOT
-SETUP_DIR= SETUP_EXE= SETUP_URL= SNAPSHOT= PKGS=
+BASE= ROOT= SETUP_DIR= SETUP_EXE= SETUP_URL= SNAPSHOT= PKGS=
 NO_DOWNLOAD=0 NO_START=0 WANT_SHORTCUT=0 WANT_LOGON=0
 DRY_RUN=0 VERBOSE=0 TERSE=0 DEBUG=0
 
 while [ $# -gt 0 ]; do
 	case $1 in
 		--)              shift; break ;;
+		-b|--base)       BASE=${2?missing value for $1}; shift 2 ;;
+		--base=*)        BASE=${1#*=}; shift ;;
 		-R|--root)       ROOT=${2?missing value for $1}; shift 2 ;;
 		--root=*)        ROOT=${1#*=}; shift ;;
-		-l|--setup-dir)  SETUP_DIR=${2?missing value for $1}; shift 2 ;;
-		--setup-dir=*)   SETUP_DIR=${1#*=}; shift ;;
+		-l|--pkg-dir|--setup-dir) SETUP_DIR=${2?missing value for $1}; shift 2 ;;
+		--pkg-dir=*|--setup-dir=*) SETUP_DIR=${1#*=}; shift ;;
 		-e|--setup-exe)  SETUP_EXE=${2?missing value for $1}; shift 2 ;;
 		--setup-exe=*)   SETUP_EXE=${1#*=}; shift ;;
 		--setup-url)     SETUP_URL=${2?missing value for $1}; shift 2 ;;
@@ -88,14 +91,25 @@ command -v cygpath >/dev/null 2>&1 || die "cygpath not found; run this from a Cy
 
 CMD="$(cygpath -S)/cmd.exe"
 PS="$(cygpath -S)/WindowsPowerShell/v1.0/powershell.exe"
+REPO_WIN=$(cygpath -w "$HERE")
+
+# Resolve base first, then root and pkg-dir under it, so relocating the whole
+# install is one --base. An explicit --root without --base takes its base from
+# the root's parent; otherwise the default base wins. Explicit --pkg-dir and
+# --root always override.
+if [ -z "$BASE" ]; then
+	if [ -n "$ROOT" ]; then
+		BASE=$(cygpath -w "$(dirname "$(cygpath -u "$ROOT")")")
+	else
+		BASE=$DEF_BASE
+	fi
+fi
+[ -n "$ROOT" ]      || ROOT="$BASE\\cygwin64"
+[ -n "$SETUP_DIR" ] || SETUP_DIR="$BASE\\packages"
+BASE_WIN=$(cygpath -w "$BASE")
+ROOT_POSIX=$(cygpath -u "$ROOT")
 NEWBASH_WIN="$ROOT\\bin\\bash.exe"
 RUNNER_WIN="$ROOT\\tmp\\install-all-mta.sh"
-REPO_WIN=$(cygpath -w "$HERE")
-ROOT_POSIX=$(cygpath -u "$ROOT")
-BASE_WIN=$(cygpath -w "$(dirname "$ROOT_POSIX")")
-# Keep the package cache beside the tree, not at the installer's own default,
-# so a custom --root gets a matching cache instead of the stock location.
-[ -n "$SETUP_DIR" ] || SETUP_DIR="$BASE_WIN\\packages"
 
 vflag=
 [ "$VERBOSE" -ge 1 ] && vflag=--verbose
@@ -115,7 +129,7 @@ build_runner() {
 }
 
 # Pass-through args for the tree installer.
-inst=(--root "$ROOT" --setup-dir "$SETUP_DIR")
+inst=(--root "$ROOT" --pkg-dir "$SETUP_DIR")
 [ -n "$SETUP_EXE" ]   && inst+=(--setup-exe "$SETUP_EXE")
 [ -n "$SETUP_URL" ]   && inst+=(--setup-url "$SETUP_URL")
 [ "$NO_DOWNLOAD" = 1 ] && inst+=(--no-download)

@@ -72,7 +72,9 @@ the sendmail shim and delivered to a Maildir, before each release.
 A writable base directory and your own account. A `setup-x86_64.exe` if one is
 already on the machine; if not, the installer downloads it from cygwin.com. The
 scripts default to `C:\cyg-rhel-8.10`, with the Cygwin root at `cygwin64\` beside
-the setup program and package cache in `packages\`.
+the setup program and package cache in `packages\`. Point `--base` (`-Base` for
+the `.ps1`) elsewhere to move the whole install; `--root` and `--pkg-dir`
+override each half on its own if you want them apart.
 Network access to the Time Machine snapshot. No administrator rights.
 
 ## What each step does

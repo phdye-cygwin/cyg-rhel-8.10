@@ -11,8 +11,7 @@ set -u
 PROG=${0##*/}
 VERSION='install-rhel810-noadmin 1.0'
 
-DEF_ROOT='C:\cyg-rhel-8.10\cygwin64'
-DEF_SETUP_DIR='C:\cyg-rhel-8.10\packages'
+DEF_BASE='C:\cyg-rhel-8.10'
 DEF_SNAPSHOT='http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2019/08/01/131636'
 DEF_SETUP_URL='https://cygwin.com/setup-x86_64.exe'
 DEF_PKGS='bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,libpq5,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
@@ -25,10 +24,12 @@ Usage:
   $PROG [options]
 
 Options:
-  -R, --root DIR        Cygwin root directory [default: $DEF_ROOT]
-  -l, --setup-dir DIR   setup-x86_64.exe and package-cache dir
-                        [default: $DEF_SETUP_DIR]
-  -e, --setup-exe PATH  path to setup-x86_64.exe [default: <setup-dir>\\setup-x86_64.exe]
+  -b, --base DIR        base directory; root and pkg-dir sit under it
+                        [default: $DEF_BASE]
+  -R, --root DIR        Cygwin root directory [default: <base>\\cygwin64]
+  -l, --pkg-dir DIR     setup-x86_64.exe and package-cache dir (alias --setup-dir)
+                        [default: <base>\\packages]
+  -e, --setup-exe PATH  path to setup-x86_64.exe [default: <pkg-dir>\\setup-x86_64.exe]
       --setup-url URL   where to download setup if none is found [default: cygwin.com]
       --no-download     never download; fail if no setup is found locally
   -s, --snapshot URL    Cygwin Time Machine snapshot URL [default: 2019-08-01 snapshot]
@@ -41,7 +42,8 @@ Options:
       --version         show version and exit
 
 Each option can also be set by environment variable (the option wins):
-REPLICA_ROOT, SETUP_DIR, SETUP_EXE, SETUP_URL, SNAPSHOT, PKGS, DRY_RUN, NO_DOWNLOAD.
+REPLICA_BASE, REPLICA_ROOT, PKG_DIR, SETUP_EXE, SETUP_URL, SNAPSHOT, PKGS,
+DRY_RUN, NO_DOWNLOAD.
 EOF
 }
 
@@ -95,8 +97,11 @@ find_setup_exe() {
 }
 
 # Environment values seed the defaults; command-line options override them.
-ROOT=${REPLICA_ROOT:-$DEF_ROOT}
-SETUP_DIR=${SETUP_DIR:-$DEF_SETUP_DIR}
+# --root and --pkg-dir stay empty until after parsing, then fall back to the
+# base directory, so an explicit --base drives both without repeating yourself.
+BASE=${REPLICA_BASE:-$DEF_BASE}
+ROOT=${REPLICA_ROOT:-}
+SETUP_DIR=${PKG_DIR:-}
 SETUP_EXE=${SETUP_EXE:-}
 SNAPSHOT=${SNAPSHOT:-$DEF_SNAPSHOT}
 SETUP_URL=${SETUP_URL:-$DEF_SETUP_URL}
@@ -108,10 +113,12 @@ VERBOSE=0 TERSE=0 DEBUG=0
 while [ $# -gt 0 ]; do
 	case $1 in
 		--)               shift; break ;;
+		-b|--base)        BASE=${2?missing value for $1}; shift 2 ;;
+		--base=*)         BASE=${1#*=}; shift ;;
 		-R|--root)        ROOT=${2?missing value for $1}; shift 2 ;;
 		--root=*)         ROOT=${1#*=}; shift ;;
-		-l|--setup-dir)   SETUP_DIR=${2?missing value for $1}; shift 2 ;;
-		--setup-dir=*)    SETUP_DIR=${1#*=}; shift ;;
+		-l|--pkg-dir|--setup-dir) SETUP_DIR=${2?missing value for $1}; shift 2 ;;
+		--pkg-dir=*|--setup-dir=*) SETUP_DIR=${1#*=}; shift ;;
 		-e|--setup-exe)   SETUP_EXE=${2?missing value for $1}; shift 2 ;;
 		--setup-exe=*)    SETUP_EXE=${1#*=}; shift ;;
 		--setup-url)      SETUP_URL=${2?missing value for $1}; shift 2 ;;
@@ -132,6 +139,10 @@ while [ $# -gt 0 ]; do
 	esac
 done
 [ $# -eq 0 ] || die_usage "unexpected argument: $1 (try --help)"
+
+# Fill root and pkg-dir from the base directory unless they were set outright.
+[ -n "$ROOT" ]      || ROOT="$BASE\\cygwin64"
+[ -n "$SETUP_DIR" ] || SETUP_DIR="$BASE\\packages"
 
 [ "$DEBUG" = 1 ] && set -x
 
