@@ -134,6 +134,7 @@ postconf -c "$CONFIG_DIR" -e \
 	"data_directory = $DATA_DIR" \
 	"mail_owner = $OWNER" \
 	"setgid_group = $GROUP" \
+	"default_privs = $OWNER" \
 	"command_directory = /usr/sbin" \
 	"daemon_directory = /usr/libexec/postfix" \
 	"mail_spool_directory = $MAILBOX_DIR/" \
