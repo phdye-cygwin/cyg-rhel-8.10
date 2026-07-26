@@ -145,12 +145,17 @@ done
 
 # 2. main.cf. mail_owner=$OWNER is the crux: Postfix checks queue ownership
 #    against it, and with both it and the running process set to the same user,
-#    the "become root" paths in master never fire.
+#    the "become root" paths in master never fire. default_privs is pinned to
+#    nobody explicitly (not just left at its built-in default) so a re-run
+#    overwrites any stale value a config dir already carries. An earlier build
+#    that set it to $OWNER leaves main.cf poisoned, and postfix then aborts with
+#    "default_privs and mail_owner specify the same user".
 postconf -c "$CONFIG_DIR" -e \
 	"queue_directory = $QUEUE_DIR" \
 	"data_directory = $DATA_DIR" \
 	"mail_owner = $OWNER" \
 	"setgid_group = $GROUP" \
+	"default_privs = nobody" \
 	"command_directory = /usr/sbin" \
 	"daemon_directory = /usr/libexec/postfix" \
 	"mail_spool_directory = $MAILBOX_DIR/" \
