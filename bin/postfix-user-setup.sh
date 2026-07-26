@@ -129,9 +129,8 @@ if [ -f /etc/passwd ] && ! grep -q '^nobody:' /etc/passwd; then
 	say "postfix-user-setup: added a nobody account for default_privs"
 fi
 
-# 1. Directories, owned by the running user. Seed main.cf/master.cf from the
-#    packaged system config when building a fresh instance dir; postconf edits
-#    them in place and needs them present.
+# 1. Directories, owned by the running user, plus the derived config files.
+#    postconf edits main.cf/master.cf in place and needs them present.
 mkdir -p "$CONFIG_DIR" "$QUEUE_DIR" "$DATA_DIR" "$MAILBOX_DIR"
 # A fresh queue directory needs its standard subdirs before master will start;
 # `postfix set-permissions` would make them but it chowns to root, which Cygwin
@@ -140,8 +139,21 @@ for d in incoming active deferred bounce defer flush hold saved corrupt trace \
 	public private maildrop pid; do
 	mkdir -p "$QUEUE_DIR/$d"
 done
-[ -f "$CONFIG_DIR/main.cf" ]   || cp /etc/postfix/main.cf   "$CONFIG_DIR/main.cf"
-[ -f "$CONFIG_DIR/master.cf" ] || cp /etc/postfix/master.cf "$CONFIG_DIR/master.cf"
+# main.cf and master.cf are derived config: reseed them from the pristine package
+# templates every run, then let the postconf edits below reapply the managed set
+# on top. Seeding no-clobber (the old behavior) let a value an earlier run wrote
+# linger after the script stopped setting it: that is how a stale default_privs
+# once downed the service, and how a changed --port left an orphaned master.cf
+# entry. Config is code here, so hand edits to these two files do not survive a
+# re-run; put local overrides in the script or a drop-in.
+pristine=/etc/defaults/etc/postfix
+for f in main.cf master.cf; do
+	if [ -f "$pristine/$f" ]; then
+		cp "$pristine/$f" "$CONFIG_DIR/$f"
+	elif [ ! -f "$CONFIG_DIR/$f" ]; then
+		cp "/etc/postfix/$f" "$CONFIG_DIR/$f"
+	fi
+done
 
 # 2. main.cf. mail_owner=$OWNER is the crux: Postfix checks queue ownership
 #    against it, and with both it and the running process set to the same user,
@@ -169,6 +181,8 @@ postconf -c "$CONFIG_DIR" -e \
 	"myorigin = \$mydomain" \
 	"mydestination = \$myhostname, localhost.\$mydomain, localhost, \$mydomain" \
 	"local_transport = local" \
+	"alias_maps = hash:/etc/aliases" \
+	"alias_database = hash:/etc/aliases" \
 	"relayhost =" \
 	"compatibility_level = 2" \
 	"append_dot_mydomain = no"
@@ -192,6 +206,13 @@ if [ ! -f /etc/aliases ]; then
 	else
 		printf 'postmaster: %s\n' "$OWNER" > /etc/aliases
 	fi
+fi
+# Keep the postmaster alias on the current owner without disturbing any other
+# entries, so a re-run with a different --owner stays consistent.
+if grep -q '^postmaster:' /etc/aliases; then
+	sed -i "s|^postmaster:.*|postmaster: $OWNER|" /etc/aliases
+else
+	printf 'postmaster: %s\n' "$OWNER" >> /etc/aliases
 fi
 postalias hash:/etc/aliases
 
