@@ -21,7 +21,7 @@
   Remaining arguments, passed through to the script.
 
 .EXAMPLE
-  run-logged.ps1 -Log C:\tmp\rhel-install.log -File .\install-all.ps1 -Root C:\-\rhel\root
+  run-logged.ps1 -Log C:\tmp\rhel-install.log -File .\install-all.ps1 -Root C:\cyg-rhel-8.10\cygwin64
 #>
 [CmdletBinding()]
 param(

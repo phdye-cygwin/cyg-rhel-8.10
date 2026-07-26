@@ -11,7 +11,7 @@
       powershell -NoProfile -ExecutionPolicy Bypass -File .\diag-mta.ps1
 
 .PARAMETER Root
-  Replica tree root to inspect. Default C:\-\rhel\root.
+  Replica tree root to inspect. Default C:\cyg-rhel-8.10\cygwin64.
 
 .PARAMETER Out
   Optional file to also receive the report.
@@ -23,7 +23,7 @@
 param(
   [Alias('h')]
   [switch]$Help,
-  [string]$Root = 'C:\-\rhel\root',
+  [string]$Root = 'C:\cyg-rhel-8.10\cygwin64',
   [string]$Out  = '',
   [Parameter(ValueFromRemainingArguments=$true)]
   $Rest
@@ -42,7 +42,7 @@ log, and inventories Python; it changes nothing. Output goes to stdout so a
 script/tee/redirect wrapper captures it; -Out writes an extra copy to a file.
 
 Options:
-  -Root DIR   replica tree to inspect      [default: C:\-\rhel\root]
+  -Root DIR   replica tree to inspect      [default: C:\cyg-rhel-8.10\cygwin64]
   -Out FILE   also write the report here
   -h, -Help   show this help and exit      (--help works too)
 '@
