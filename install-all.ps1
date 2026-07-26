@@ -131,7 +131,10 @@ if (-not $SetupExe) {
   }
 }
 
-$setupArgs = @('-q','-X','-n','-d','-N','--no-admin','-R',$Root,'-s',$Snapshot,'-l',$PkgDir,'-P',$Packages)
+# -O (--only-site) pins setup to the snapshot and skips the mirror list; without
+# it, older setup can fall back to an empty mirror list and select zero packages
+# even when the snapshot is reachable.
+$setupArgs = @('-q','-X','-O','-n','-d','-N','--no-admin','-R',$Root,'-s',$Snapshot,'-l',$PkgDir,'-P',$Packages)
 
 if ($DryRun) {
   Write-Host "== phase 1: install the tree =="

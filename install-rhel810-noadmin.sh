@@ -229,7 +229,10 @@ if [ "$TERSE" != 1 ]; then
 	printf 'packages  : %s requested\n' "$(printf '%s' "$PKGS" | tr ',' ' ' | wc -w)"
 fi
 
-setup_args=(-q -X -n -d -N --no-admin
+# -O (--only-site) pins setup to the snapshot site and skips the mirror list;
+# without it, older setup can fall back to an empty mirror list and select zero
+# packages even when the snapshot is reachable.
+setup_args=(-q -X -O -n -d -N --no-admin
 	-R "$ROOT" -s "$SNAPSHOT" -l "$SETUP_DIR" -P "$PKGS")
 
 if [ "$DRY_RUN" = 1 ]; then
