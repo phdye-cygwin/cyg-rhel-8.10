@@ -9,7 +9,18 @@ symlinks) is a convenience, not a requirement.
 ## Quick start
 
 You need an existing Cygwin `setup-x86_64.exe` on the machine, a writable
-directory, and no administrator rights. Clone the repo, then:
+directory, and no administrator rights. Clone the repo, then run the one-shot
+harness from your existing Cygwin shell:
+
+```sh
+./install-all.sh          # --dry-run to preview; --help for options
+```
+
+It installs the tree, then installs, configures, and starts the MTA inside it.
+It crosses into the new tree through `cmd.exe`, since a replica binary launched
+directly from another Cygwin shell deadlocks on the two `cygwin1.dll` instances.
+
+Prefer to run the phases yourself? The same steps by hand:
 
 ```sh
 # 1. Install the Cygwin tree into C:\cyg-rhel-8.10 (no admin). Finds
@@ -95,6 +106,7 @@ validates the unprivileged path.
 ## Layout
 
 ```
+install-all.sh               one-shot harness: install the tree, then the MTA
 install-rhel810-noadmin.sh   setup wrapper (--no-admin, configurable root)
 bin/install-packages.sh      unpack built postfix + mailx into the tree
 bin/postfix-user-setup.sh     configure Postfix to run as your user
