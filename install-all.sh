@@ -113,6 +113,11 @@ REPO_WIN=$(cygpath -w "$HERE")
 # install is one --base. An explicit --root without --base takes its base from
 # the root's parent; otherwise the default base wins. Explicit --pkg-dir and
 # --root always override.
+# Precedence per the CLI convention: option, then environment, then default.
+# CYG_RHEL_ROOT / CYG_RHEL_SETUP_DIR set the install location for the whole tool
+# family without a path living in the repo.
+[ -n "$ROOT" ]      || ROOT=${CYG_RHEL_ROOT:-}
+[ -n "$SETUP_DIR" ] || SETUP_DIR=${CYG_RHEL_SETUP_DIR:-}
 if [ -z "$BASE" ]; then
 	if [ -n "$ROOT" ]; then
 		BASE=$(cygpath -w "$(dirname "$(cygpath -u "$ROOT")")")

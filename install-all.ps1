@@ -72,6 +72,11 @@ if ($Log) {
 # Use [IO.Path] rather than Join-Path/Split-Path: these are pure string ops, so
 # a -Base on a drive that is not mounted yet still resolves (Join-Path checks
 # the drive and throws).
+# Precedence per the CLI convention: option, then environment, then default.
+# CYG_RHEL_ROOT / CYG_RHEL_SETUP_DIR let a site set the install location once
+# for the whole tool family without a path living in the repo.
+if (-not $Root   -and $env:CYG_RHEL_ROOT)       { $Root   = $env:CYG_RHEL_ROOT }
+if (-not $PkgDir -and $env:CYG_RHEL_SETUP_DIR)  { $PkgDir = $env:CYG_RHEL_SETUP_DIR }
 if (-not $Base) {
   if ($Root) { $Base = [IO.Path]::GetDirectoryName($Root) } else { $Base = 'C:\cyg-rhel-8.10' }
 }
@@ -146,7 +151,7 @@ trap {
 # dir, else the newest found locally (copied in), else downloaded.
 $import = $null; $download = $null
 if (-not $SetupExe) {
-  $intended = Join-Path $PkgDir 'setup-x86_64.exe'
+  $intended = [IO.Path]::Combine($PkgDir, 'setup-x86_64.exe')
   if (Test-Path $intended) { $SetupExe = $intended }
   else {
     $found = Find-SetupExe
