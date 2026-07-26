@@ -169,10 +169,11 @@ if ($DryRun) {
   Write-Host ("would run : {0} {1}" -f $SetupExe, ($setupArgs -join ' '))
   Write-Host "== preflight: reap any postfix left running under $Root =="
   Write-Host "  bin/stop-tree-postfix.ps1 -Root $Root"
-  Write-Host "== phase 2: run inside $Root via its own bash =="
+  Write-Host "== phase 2: configure inside $Root via its own bash =="
   Write-Host "  bin/install-packages.sh"
   Write-Host "  bin/postfix-user-setup.sh"
-  if ($NoStart) { Write-Host "  bin/postfix-user-launch.sh stop" } else { Write-Host "  bin/postfix-user-launch.sh restart" }
+  Write-Host "  bin/postfix-user-launch.sh stop"
+  if (-not $NoStart) { Write-Host "== phase 3: start the MTA (detached) =="; Write-Host "  bin/start-tree-postfix.ps1 -Root $Root" }
   if ($Shortcut)  { Write-Host "then: install-mintty-shortcut.ps1 -Base $Base" }
   if ($LogonTask) { Write-Host "then: install-logon-task.ps1" }
   Stop-Log
@@ -260,16 +261,14 @@ if (-not (Test-Writable $PkgDir)) {
     }
   }
 
-  # Phase 2: a bash runner executed by the NEW tree's bash. REPO is baked in as a
-  # Windows path and converted with the new tree's own cygpath. The runner sends
-  # its output to a plain log file in the tree (not a tee pipe): the postfix
-  # master it starts would inherit a process-substitution fd and hold it open,
-  # so tee never sees EOF and Start-Process -Wait would hang forever. This side
-  # prints the log after the phase instead.
+  # Phase 2: a bash runner (config + reap only, no daemon) executed by the NEW
+  # tree's bash. REPO is baked in as a Windows path and converted with the new
+  # tree's own cygpath. It starts nothing that lingers, so -Wait on it is safe;
+  # the MTA is started separately and detached in phase 3. Output goes to a plain
+  # log file that this side prints after the phase.
   $tmp = Join-Path $Root 'tmp'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   $runnerWin = Join-Path $tmp 'install-all-mta.sh'
   $mtaLog    = Join-Path $tmp 'install-all-mta.log'
-  $startLine = if ($NoStart) { '"$REPO/bin/postfix-user-launch.sh" stop' } else { '"$REPO/bin/postfix-user-launch.sh" restart' }
   $runner = @"
 #!/bin/bash
 set -e
@@ -278,16 +277,25 @@ exec >/tmp/install-all-mta.log 2>&1
 REPO=`$(cygpath -u '$Here')
 "`$REPO/bin/install-packages.sh"
 "`$REPO/bin/postfix-user-setup.sh"
-$startLine
-echo "install-all: MTA phase done"
+"`$REPO/bin/postfix-user-launch.sh" stop
+echo "install-all: config phase done"
 "@
   [IO.File]::WriteAllText($runnerWin, ($runner -replace "`r`n","`n"))
 
-  Write-Host "== phase 2: install and start the MTA inside the new tree =="
+  Write-Host "== phase 2: install and configure the MTA inside the new tree =="
   $p2 = Start-Process -FilePath $NewBash -ArgumentList $runnerWin -Wait -NoNewWindow -PassThru
   if (Test-Path $mtaLog) { Write-Host "-- phase-2 runner log --"; Get-Content $mtaLog }
   if ($p2.ExitCode -ne 0) {
-    throw "MTA phase failed inside the new tree (exit $($p2.ExitCode))"
+    throw "MTA config phase failed inside the new tree (exit $($p2.ExitCode))"
+  }
+
+  # Phase 3: start the MTA detached and console-less (Win32_Process.Create). Doing
+  # this inside the -Wait'd phase-2 runner is what hung every prior attempt: the
+  # daemon held the run's console/pty and nothing after "phase done" returned.
+  # Here the run never waits on the daemon; the helper polls master.pid instead.
+  if (-not $NoStart) {
+    Write-Host "== phase 3: start the MTA (detached) =="
+    & (Join-Path $Here 'bin\start-tree-postfix.ps1') -Root $Root
   }
 
   if ($Shortcut)  { & (Join-Path $Here 'bin\install-mintty-shortcut.ps1') -Base $Base }

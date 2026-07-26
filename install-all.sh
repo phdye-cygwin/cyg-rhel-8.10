@@ -140,12 +140,10 @@ build_runner() {
 	printf "REPO=\$(cygpath -u '%s')\n" "$REPO_WIN"
 	printf '"$REPO/bin/install-packages.sh" %s\n' "$vflag"
 	printf '"$REPO/bin/postfix-user-setup.sh" %s\n' "$vflag"
-	if [ "$NO_START" = 1 ]; then
-		printf '"$REPO/bin/postfix-user-launch.sh" stop %s\n' "$vflag"
-	else
-		printf '"$REPO/bin/postfix-user-launch.sh" restart %s\n' "$vflag"
-	fi
-	echo 'echo "install-all: MTA phase done"'
+	# Config + reap only; no daemon here. The MTA is started detached after this
+	# runner returns (phase 3), so nothing lingering is left holding the pipe.
+	printf '"$REPO/bin/postfix-user-launch.sh" stop %s\n' "$vflag"
+	echo 'echo "install-all: config phase done"'
 }
 
 # Pass-through args for the tree installer.
@@ -186,7 +184,7 @@ say "== phase 1: install the Cygwin tree =="
 mkdir -p "$ROOT_POSIX/tmp"
 build_runner > "$ROOT_POSIX/tmp/install-all-mta.sh"
 
-say "== phase 2: install and start the MTA inside the new tree (cmd bridge) =="
+say "== phase 2: install and configure the MTA inside the new tree (cmd bridge) =="
 # Capture the runner's output to a log in the new tree as well as the console,
 # so a phase-2 failure leaves a readable trail even if this shell was not.
 mta_log="$ROOT_POSIX/tmp/install-all-mta.log"
@@ -197,6 +195,14 @@ if [ "$rc" != 0 ]; then
 	err "runner log: $ROOT\\tmp\\install-all-mta.log  (last lines below)"
 	tail -25 "$mta_log" >&2 2>/dev/null
 	die "MTA phase failed; see the runner log and the diagnostics above"
+fi
+
+# Phase 3: start the MTA detached and console-less, so it shares no handle with
+# this shell (starting it inside the phase-2 runner would hang the run). The
+# helper uses Win32_Process.Create and polls master.pid for readiness.
+if [ "$NO_START" != 1 ]; then
+	say "== phase 3: start the MTA (detached) =="
+	"$PS" -NoProfile -ExecutionPolicy Bypass -File "$REPO_WIN\\bin\\start-tree-postfix.ps1" -Root "$ROOT" || die "MTA failed to start"
 fi
 
 if [ "$WANT_SHORTCUT" = 1 ]; then
