@@ -20,6 +20,7 @@ param(
   [string]$SetupUrl  = 'https://cygwin.com/setup-x86_64.exe',
   [string]$Snapshot  = 'http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2019/08/01/131636',
   [string]$Packages  = '',
+  [string]$Log       = '',
   [switch]$NoDownload,
   [switch]$NoStart,
   [switch]$Shortcut,
@@ -28,6 +29,17 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Here = $PSScriptRoot
+
+# -Log is the PowerShell analog of Cygwin's `script`: transcribe everything to a
+# file. A transcript can miss a native child's own console output, so on the way
+# out we also fold in setup.log.full and the phase-2 runner log (see Stop-Log and
+# the end of the run), making the capture complete.
+function Stop-Log { if ($Log) { try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {} } }
+if ($Log) {
+  try { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null } catch {}
+  try { Start-Transcript -Path $Log -Force -ErrorAction Stop | Out-Null; Write-Host "logging to $Log" }
+  catch { Write-Host "warning: transcript unavailable: $($_.Exception.Message)" }
+}
 
 # Base is the primary knob: root and pkg-dir sit under it. An explicit -Root
 # without -Base takes its base from the root's parent; otherwise the default
@@ -101,6 +113,7 @@ trap {
   Write-Host ""
   Write-Host "install-all: FAILED -- $($_.Exception.Message)"
   Write-Diag
+  Stop-Log
   exit 1
 }
 
@@ -132,6 +145,7 @@ if ($DryRun) {
   if (-not $NoStart) { Write-Host "  bin/postfix-user-launch.sh start" }
   if ($Shortcut)  { Write-Host "then: install-mintty-shortcut.ps1 -Base $Base" }
   if ($LogonTask) { Write-Host "then: install-logon-task.ps1" }
+  Stop-Log
   exit 0
 }
 
@@ -200,3 +214,12 @@ echo "install-all: MTA phase done"
   if ($LogonTask) { & (Join-Path $Here 'bin\install-logon-task.ps1') }
 
   Write-Host "install-all: done. Replica at $Root"
+
+# When logging, fold the native children's own output into the transcript so the
+# captured log is as complete as `script` would be.
+if ($Log) {
+  $sl = [IO.Path]::Combine($Root, 'var\log\setup.log.full')
+  if (Test-There $sl)     { Write-Host "-- setup.log.full (tail) --"; Get-Content $sl -Tail 40 -ErrorAction SilentlyContinue }
+  if (Test-There $mtaLog) { Write-Host "-- phase-2 runner log --";    Get-Content $mtaLog -ErrorAction SilentlyContinue }
+}
+Stop-Log
