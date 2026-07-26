@@ -45,9 +45,25 @@ EOF
 }
 
 err()       { printf '%s: %s\n' "$PROG" "$*" >&2; }
-die()       { err "$*"; exit 1; }
+die()       { err "$*"; diag; exit 1; }
 die_usage() { err "$*"; exit 2; }
 say()       { [ "$TERSE" = 1 ] || printf '%s\n' "$*"; }
+
+# Dump the harness's view of the world so a failure is diagnosable from the log.
+diag() {
+	{
+		echo "---- diagnostics ($PROG) ----"
+		echo "date       : $(date 2>/dev/null)"
+		echo "uname      : $(uname -a 2>/dev/null)"
+		echo "base       : ${BASE:-<unset>}"
+		echo "root       : ${ROOT:-<unset>}"
+		echo "pkg-dir    : ${SETUP_DIR:-<unset>}"
+		echo "new bash   : ${NEWBASH_WIN:-<unset>}  [$( [ -n "${ROOT_POSIX:-}" ] && [ -f "$ROOT_POSIX/bin/bash.exe" ] && echo present || echo absent )]"
+		echo "runner     : ${RUNNER_WIN:-<unset>}"
+		echo "cygpath    : $(command -v cygpath 2>/dev/null || echo absent)"
+		echo "-----------------------------"
+	} >&2
+}
 
 BASE= ROOT= SETUP_DIR= SETUP_EXE= SETUP_URL= SNAPSHOT= PKGS=
 NO_DOWNLOAD=0 NO_START=0 WANT_SHORTCUT=0 WANT_LOGON=0
@@ -159,7 +175,17 @@ mkdir -p "$ROOT_POSIX/tmp"
 build_runner > "$ROOT_POSIX/tmp/install-all-mta.sh"
 
 say "== phase 2: install and start the MTA inside the new tree (cmd bridge) =="
-"$CMD" /c "$NEWBASH_WIN $RUNNER_WIN" || die "MTA phase failed inside the new tree"
+# Capture the runner's output to a log in the new tree as well as the console,
+# so a phase-2 failure leaves a readable trail even if this shell was not.
+mta_log="$ROOT_POSIX/tmp/install-all-mta.log"
+"$CMD" /c "$NEWBASH_WIN $RUNNER_WIN" 2>&1 | tee "$mta_log"
+rc=${PIPESTATUS[0]}
+if [ "$rc" != 0 ]; then
+	err "MTA phase failed inside the new tree (exit $rc)"
+	err "runner log: $ROOT\\tmp\\install-all-mta.log  (last lines below)"
+	tail -25 "$mta_log" >&2 2>/dev/null
+	die "MTA phase failed; see the runner log and the diagnostics above"
+fi
 
 if [ "$WANT_SHORTCUT" = 1 ]; then
 	say "== mintty shortcut =="

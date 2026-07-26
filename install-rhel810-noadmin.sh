@@ -48,24 +48,81 @@ EOF
 }
 
 err()       { printf '%s: %s\n' "$PROG" "$*" >&2; }
-die()       { err "$*"; exit 1; }          # runtime failure
-die_usage() { err "$*"; exit 2; }          # bad invocation
+die()       { err "$*"; diag; exit 1; }    # runtime failure, with diagnostics
+die_usage() { err "$*"; exit 2; }          # bad invocation (no diag; it is user error)
 
 win2posix() {
 	if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s' "$1"; fi
 }
 
-# Download url ($1) to a POSIX path ($2) with whatever fetcher is available.
+pshell() { printf '%s' "$(cygpath -S 2>/dev/null)/WindowsPowerShell/v1.0/powershell.exe"; }
+
+# Dump the environment facts that make a failure diagnosable straight from the
+# log, so a failed run can be reported without a second round of questions.
+diag() {
+	{
+		echo "---- diagnostics ($PROG) ----"
+		echo "date       : $(date 2>/dev/null)"
+		echo "uname      : $(uname -a 2>/dev/null)"
+		echo "shell/pwd  : $0  |  $(pwd 2>/dev/null)"
+		echo "base       : ${BASE:-<unset>}"
+		echo "root       : ${ROOT:-<unset>}"
+		echo "pkg-dir    : ${SETUP_DIR:-<unset>}"
+		echo "setup exe  : ${SETUP_EXE:-<unset>}"
+		echo "snapshot   : ${SNAPSHOT:-<unset>}"
+		echo "curl       : $(command -v curl 2>/dev/null || echo absent)  [$(curl --version 2>/dev/null | head -1)]"
+		echo "wget       : $(command -v wget 2>/dev/null || echo absent)"
+		echo "powershell : $(pshell)  [$( [ -f "$(pshell)" ] && echo present || echo MISSING )]"
+		echo "ca-bundle  : $(ls -l /usr/ssl/certs/ca-bundle.crt 2>&1)"
+		echo "pkg-dir    : $(ls -ld "$(win2posix "${SETUP_DIR:-/}" 2>/dev/null)" 2>&1)"
+		echo "disk free  : $(df -h "$(win2posix "${BASE:-/}" 2>/dev/null)" 2>&1 | tail -1)"
+		echo "-----------------------------"
+	} >&2
+}
+
+# True if any way to download is available. Used both as a preflight gate and to
+# decide whether a download attempt is even worth making.
+have_fetcher() {
+	command -v curl >/dev/null 2>&1 && return 0
+	command -v wget >/dev/null 2>&1 && return 0
+	[ -f "$(pshell)" ] && return 0
+	return 1
+}
+
+# Confirm a Windows dir ($1) can be created and written before we rely on it.
+check_writable() {
+	local win=$1 p
+	p=$(win2posix "$win")
+	mkdir -p "$p" 2>/dev/null || return 1
+	( : > "$p/.wtest.$$" ) 2>/dev/null || return 1
+	rm -f "$p/.wtest.$$" 2>/dev/null
+	return 0
+}
+
+# Download url ($1) to a POSIX path ($2). Tries every fetcher in turn: a
+# present-but-broken one (e.g. Cygwin curl with no CA bundle) must not abort the
+# download when wget or PowerShell would succeed. PowerShell uses the Windows
+# cert store, so it is the reliable last resort. Each attempt is logged.
 download_to() {
 	local url=$1 dest=$2 ps
 	if command -v curl >/dev/null 2>&1; then
-		curl -fLo "$dest" "$url"
-	elif command -v wget >/dev/null 2>&1; then
-		wget -O "$dest" "$url"
-	else
-		ps="$(cygpath -S 2>/dev/null)/WindowsPowerShell/v1.0/powershell.exe"
-		"$ps" -NoProfile -Command "Invoke-WebRequest -Uri '$url' -OutFile '$(cygpath -w "$dest")'"
+		err "download: trying curl"
+		curl -fL --retry 2 -o "$dest" "$url" && return 0
+		err "download: curl failed (exit $?); trying next method"
 	fi
+	if command -v wget >/dev/null 2>&1; then
+		err "download: trying wget"
+		wget -O "$dest" "$url" && return 0
+		err "download: wget failed (exit $?); trying next method"
+	fi
+	ps=$(pshell)
+	if [ -f "$ps" ]; then
+		err "download: trying PowerShell Invoke-WebRequest"
+		"$ps" -NoProfile -Command "\$ErrorActionPreference='Stop'; Invoke-WebRequest -Uri '$url' -OutFile '$(cygpath -w "$dest")' -UseBasicParsing" && return 0
+		err "download: PowerShell failed (exit $?)"
+	fi
+	err "download: no fetcher succeeded (curl/wget/PowerShell)"
+	return 1
 }
 
 # Print the newest setup-x86_64.exe found in the usual download spots, or
@@ -182,6 +239,19 @@ if [ "$DRY_RUN" = 1 ]; then
 	printf ' %s' "${setup_args[@]}"
 	printf '\n'
 	exit 0
+fi
+
+# Preflight: catch the cheap, common failures before the multi-minute setup run,
+# so a bad target or a missing downloader is reported up front, not midway.
+check_writable "$SETUP_DIR" \
+	|| die "package dir is not writable: $SETUP_DIR
+  pick another --pkg-dir or --base, or check permissions"
+check_writable "$(dirname "$(win2posix "$ROOT")")" \
+	|| die "the root's parent is not writable, so setup cannot create $ROOT
+  pick another --root or --base"
+if [ -n "$DOWNLOAD" ] && ! have_fetcher; then
+	die "setup must be downloaded but no fetcher is available (curl, wget, or PowerShell)
+  pre-place setup-x86_64.exe in $SETUP_DIR, pass --setup-exe, or use --no-download"
 fi
 
 # Get a setup exe into the setup dir: copy the discovered one, or download it.

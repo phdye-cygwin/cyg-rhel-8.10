@@ -59,6 +59,46 @@ queue_dir()  { postconf -c "$CONFIG_DIR" -h queue_directory 2>/dev/null; }
 master_pid() { head -1 "$(queue_dir)/pid/master.pid" 2>/dev/null | tr -dc '0-9'; }
 is_running() { local pid; pid=$(master_pid); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
 
+# Why did master fail to come up? master owns the inet listener sockets and
+# routes its own fatals through postlogd, which is not up yet at startup, so an
+# early bind failure never reaches maillog. The port probe is what actually
+# exposes "address already in use" (the usual cause, e.g. another postfix on 25);
+# Windows netstat -ano names the process holding it.
+diag_start() {
+	local svc port winnet
+	winnet="$(cygpath -S 2>/dev/null)/netstat.exe"
+	{
+		echo "---- postfix start diagnostics ----"
+		echo "config     : $CONFIG_DIR"
+		echo "user       : $(id -un) ($(id -u):$(id -g))"
+		echo "queue dir  : $(ls -ld "$(queue_dir)" 2>&1)"
+		echo "maillog    : $log"
+		echo "-- key settings --"
+		postconf -c "$CONFIG_DIR" -h inet_interfaces inet_protocols mynetworks mail_owner 2>&1
+		echo "-- smtpd inet services --"
+		postconf -c "$CONFIG_DIR" -M 2>/dev/null | awk '$2=="inet"{print}'
+		for svc in $(postconf -c "$CONFIG_DIR" -M 2>/dev/null | awk '$2=="inet"{print $1}'); do
+			port=${svc##*:}
+			# A named service (stock "smtp inet") maps to its well-known port.
+			case $port in *[!0-9]*|'')
+				port=$(python3 -c "import socket,sys; print(socket.getservbyname(sys.argv[1]))" "$port" 2>/dev/null) ;;
+			esac
+			case $port in *[!0-9]*|'') continue ;; esac
+			echo "-- port $port (from $svc) --"
+			python3 -c "import socket
+s=socket.socket()
+try:
+ s.bind(('127.0.0.1',$port)); print(' bindable: yes (nothing is holding it)')
+except OSError as e: print(' bindable: NO -', e)
+finally: s.close()" 2>&1
+			[ -f "$winnet" ] && "$winnet" -ano 2>/dev/null | grep -E "[:.]$port " | head -5
+		done
+		echo "-- last maillog lines --"
+		tail -15 "$log" 2>&1
+		echo "-----------------------------------"
+	} >&2
+}
+
 case $ACTION in
 start)
 	if is_running; then say "postfix already running ($CONFIG_DIR, pid $(master_pid))"; exit 0; fi
@@ -71,7 +111,9 @@ start)
 	if is_running; then
 		say "postfix started ($CONFIG_DIR, pid $(master_pid))"
 	else
-		err "failed to start; see $log"; exit 1
+		err "failed to start; maillog is often empty here (see below for why)"
+		diag_start
+		exit 1
 	fi
 	;;
 stop)
