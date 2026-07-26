@@ -14,7 +14,8 @@ VERSION='install-rhel810-noadmin 1.0'
 DEF_ROOT='C:\cyg-rhel-8.10\cygwin64'
 DEF_SETUP_DIR='C:\cyg-rhel-8.10\packages'
 DEF_SNAPSHOT='http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin/circa/64bit/2019/08/01/131636'
-DEF_PKGS='bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
+DEF_SETUP_URL='https://cygwin.com/setup-x86_64.exe'
+DEF_PKGS='bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,libpq5,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
 
 usage() {
 	cat <<EOF
@@ -28,6 +29,8 @@ Options:
   -l, --setup-dir DIR   setup-x86_64.exe and package-cache dir
                         [default: $DEF_SETUP_DIR]
   -e, --setup-exe PATH  path to setup-x86_64.exe [default: <setup-dir>\\setup-x86_64.exe]
+      --setup-url URL   where to download setup if none is found [default: cygwin.com]
+      --no-download     never download; fail if no setup is found locally
   -s, --snapshot URL    Cygwin Time Machine snapshot URL [default: 2019-08-01 snapshot]
   -P, --packages LIST   comma-separated package set
   -n, --dry-run         print the setup command; install nothing
@@ -38,7 +41,7 @@ Options:
       --version         show version and exit
 
 Each option can also be set by environment variable (the option wins):
-REPLICA_ROOT, SETUP_DIR, SETUP_EXE, SNAPSHOT, PKGS, DRY_RUN.
+REPLICA_ROOT, SETUP_DIR, SETUP_EXE, SETUP_URL, SNAPSHOT, PKGS, DRY_RUN, NO_DOWNLOAD.
 EOF
 }
 
@@ -48,6 +51,19 @@ die_usage() { err "$*"; exit 2; }          # bad invocation
 
 win2posix() {
 	if command -v cygpath >/dev/null 2>&1; then cygpath -u "$1"; else printf '%s' "$1"; fi
+}
+
+# Download url ($1) to a POSIX path ($2) with whatever fetcher is available.
+download_to() {
+	local url=$1 dest=$2 ps
+	if command -v curl >/dev/null 2>&1; then
+		curl -fLo "$dest" "$url"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -O "$dest" "$url"
+	else
+		ps="$(cygpath -S 2>/dev/null)/WindowsPowerShell/v1.0/powershell.exe"
+		"$ps" -NoProfile -Command "Invoke-WebRequest -Uri '$url' -OutFile '$(cygpath -w "$dest")'"
+	fi
 }
 
 # Print the newest setup-x86_64.exe found in the usual download spots, or
@@ -83,8 +99,10 @@ ROOT=${REPLICA_ROOT:-$DEF_ROOT}
 SETUP_DIR=${SETUP_DIR:-$DEF_SETUP_DIR}
 SETUP_EXE=${SETUP_EXE:-}
 SNAPSHOT=${SNAPSHOT:-$DEF_SNAPSHOT}
+SETUP_URL=${SETUP_URL:-$DEF_SETUP_URL}
 PKGS=${PKGS:-$DEF_PKGS}
 DRY_RUN=${DRY_RUN:-0}
+NO_DOWNLOAD=${NO_DOWNLOAD:-0}
 VERBOSE=0 TERSE=0 DEBUG=0
 
 while [ $# -gt 0 ]; do
@@ -96,6 +114,9 @@ while [ $# -gt 0 ]; do
 		--setup-dir=*)    SETUP_DIR=${1#*=}; shift ;;
 		-e|--setup-exe)   SETUP_EXE=${2?missing value for $1}; shift 2 ;;
 		--setup-exe=*)    SETUP_EXE=${1#*=}; shift ;;
+		--setup-url)      SETUP_URL=${2?missing value for $1}; shift 2 ;;
+		--setup-url=*)    SETUP_URL=${1#*=}; shift ;;
+		--no-download)    NO_DOWNLOAD=1; shift ;;
 		-s|--snapshot)    SNAPSHOT=${2?missing value for $1}; shift 2 ;;
 		--snapshot=*)     SNAPSHOT=${1#*=}; shift ;;
 		-P|--packages)    PKGS=${2?missing value for $1}; shift 2 ;;
@@ -118,7 +139,7 @@ done
 # value; else the one already in the setup dir; else the newest one found in the
 # usual download spots, which gets copied into the setup dir. IMPORT_FROM holds a
 # source path when we had to go find it.
-IMPORT_FROM=
+IMPORT_FROM= DOWNLOAD=
 if [ -z "$SETUP_EXE" ]; then
 	intended="$SETUP_DIR\\setup-x86_64.exe"
 	if [ -f "$(win2posix "$intended")" ]; then
@@ -126,6 +147,7 @@ if [ -z "$SETUP_EXE" ]; then
 	else
 		IMPORT_FROM=$(find_setup_exe)
 		SETUP_EXE=$intended
+		[ -n "$IMPORT_FROM" ] || [ "$NO_DOWNLOAD" = 1 ] || DOWNLOAD=$SETUP_URL
 	fi
 fi
 RUN_EXE=$(win2posix "$SETUP_EXE")
@@ -133,6 +155,7 @@ RUN_EXE=$(win2posix "$SETUP_EXE")
 if [ "$TERSE" != 1 ]; then
 	printf 'setup exe : %s\n' "$SETUP_EXE"
 	[ -n "$IMPORT_FROM" ] && printf 'import    : %s\n' "$IMPORT_FROM"
+	[ -n "$DOWNLOAD" ] && printf 'download  : %s\n' "$DOWNLOAD"
 	printf 'root      : %s\n' "$ROOT"
 	printf 'snapshot  : %s\n' "$SNAPSHOT"
 	printf 'packages  : %s requested\n' "$(printf '%s' "$PKGS" | tr ',' ' ' | wc -w)"
@@ -143,18 +166,24 @@ setup_args=(-q -X -n -d -N --no-admin
 
 if [ "$DRY_RUN" = 1 ]; then
 	[ -n "$IMPORT_FROM" ] && err "would copy newest setup: $IMPORT_FROM -> $SETUP_DIR"
+	[ -n "$DOWNLOAD" ] && err "would download setup: $DOWNLOAD -> $SETUP_DIR"
 	printf 'DRY RUN, would run:\n  %s' "$SETUP_EXE"
 	printf ' %s' "${setup_args[@]}"
 	printf '\n'
 	exit 0
 fi
 
-# Import the discovered setup exe into the setup dir when we had to find one.
-if [ -n "$IMPORT_FROM" ]; then
+# Get a setup exe into the setup dir: copy the discovered one, or download it.
+if [ -n "$IMPORT_FROM" ] || [ -n "$DOWNLOAD" ]; then
 	dest=$(win2posix "$SETUP_DIR")
 	mkdir -p "$dest"
-	cp -f "$IMPORT_FROM" "$dest/setup-x86_64.exe" || die "could not copy setup into $SETUP_DIR"
-	[ "$TERSE" = 1 ] || err "imported newest setup: $IMPORT_FROM"
+	if [ -n "$IMPORT_FROM" ]; then
+		cp -f "$IMPORT_FROM" "$dest/setup-x86_64.exe" || die "could not copy setup into $SETUP_DIR"
+		[ "$TERSE" = 1 ] || err "imported newest setup: $IMPORT_FROM"
+	else
+		[ "$TERSE" = 1 ] || err "downloading setup from $DOWNLOAD"
+		download_to "$DOWNLOAD" "$dest/setup-x86_64.exe" || die "download failed: $DOWNLOAD"
+	fi
 fi
 
 # Fail loudly if the setup program is still missing, instead of claiming success.
