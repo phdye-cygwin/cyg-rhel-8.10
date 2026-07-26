@@ -6,6 +6,10 @@ Phase 1 runs setup-x86_64.exe (a native program) with --no-admin to build the
 tree; if no setup-x86_64.exe is found locally it downloads one. Phase 2 launches
 the new tree's own bash to install and start the MTA -- safe, because PowerShell
 is a native parent, so there is no cygwin1.dll collision and no cmd bridge.
+
+Any failure prints layered diagnostics: what was attempted, the environment, and
+the tail of setup.log.full or the phase-2 runner log, so a failed run can be
+reported without a second round of questions.
 #>
 param(
   [string]$Base      = '',
@@ -40,6 +44,39 @@ if (-not $Packages) {
   $Packages = 'bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,libpq5,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
 }
 
+$NewBash = [IO.Path]::Combine($Root, 'bin\bash.exe')
+
+# Dump the environment facts that make a failure diagnosable from the log alone,
+# including the tail of setup.log.full when it exists.
+function Test-There([string]$p) { return ($p -and (Test-Path $p -ErrorAction SilentlyContinue)) }
+function Write-Diag {
+  $sl = if ($Root) { [IO.Path]::Combine($Root, 'var\log\setup.log.full') } else { '' }
+  Write-Host "---- diagnostics (install-all.ps1) ----"
+  Write-Host ("date       : {0}" -f (Get-Date -Format o))
+  Write-Host ("host/user  : {0} / {1}" -f $env:COMPUTERNAME, $env:USERNAME)
+  Write-Host ("PSVersion  : {0}" -f $PSVersionTable.PSVersion)
+  Write-Host ("OS         : {0}" -f [Environment]::OSVersion.VersionString)
+  Write-Host ("base       : {0}" -f $Base)
+  Write-Host ("root       : {0}" -f $Root)
+  Write-Host ("pkg-dir    : {0}" -f $PkgDir)
+  Write-Host ("setup exe  : {0}  [{1}]" -f $SetupExe, $(if (Test-There $SetupExe) {'present'} else {'absent'}))
+  Write-Host ("new bash   : {0}  [{1}]" -f $NewBash, $(if (Test-There $NewBash) {'present'} else {'absent'}))
+  Write-Host ("setup.log  : {0}  [{1}]" -f $sl, $(if (Test-There $sl) {'present'} else {'absent'}))
+  Write-Host "---------------------------------------"
+  if (Test-There $sl) { Write-Host "-- tail of setup.log.full --"; Get-Content $sl -Tail 20 -ErrorAction SilentlyContinue }
+}
+
+# Confirm a directory can be created and written before we rely on it.
+function Test-Writable([string]$dir) {
+  try {
+    New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop | Out-Null
+    $t = Join-Path $dir ('.wtest-' + $PID)
+    Set-Content -Path $t -Value 'x' -ErrorAction Stop
+    Remove-Item $t -Force -ErrorAction SilentlyContinue
+    return $true
+  } catch { return $false }
+}
+
 function Find-SetupExe {
   $cands = @()
   $dirs = @((Join-Path $env:USERPROFILE 'Downloads'),
@@ -58,6 +95,15 @@ function Find-SetupExe {
   ($cands | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
 }
 
+# Any terminating error from here on -- resolution, preflight, setup, phase 2 --
+# lands here with layered diagnostics before exiting non-zero.
+trap {
+  Write-Host ""
+  Write-Host "install-all: FAILED -- $($_.Exception.Message)"
+  Write-Diag
+  exit 1
+}
+
 # Resolve which setup-x86_64.exe to use: explicit, else already in the package
 # dir, else the newest found locally (copied in), else downloaded.
 $import = $null; $download = $null
@@ -72,7 +118,6 @@ if (-not $SetupExe) {
   }
 }
 
-$NewBash = Join-Path $Root 'bin\bash.exe'
 $setupArgs = @('-q','-X','-n','-d','-N','--no-admin','-R',$Root,'-s',$Snapshot,'-l',$PkgDir,'-P',$Packages)
 
 if ($DryRun) {
@@ -90,39 +135,68 @@ if ($DryRun) {
   exit 0
 }
 
-New-Item -ItemType Directory -Force -Path $PkgDir | Out-Null
-$dest = Join-Path $PkgDir 'setup-x86_64.exe'
-if ($import)   { Copy-Item -Force $import $dest; Write-Host "imported setup: $import" }
-if ($download) { Write-Host "downloading setup from $download"; Invoke-WebRequest -Uri $download -OutFile $dest }
-if (-not (Test-Path $SetupExe)) { throw "setup program not found: $SetupExe" }
+# Preflight: catch the cheap, common failures before the multi-minute setup run.
+if (-not (Test-Writable $PkgDir)) {
+    throw "package dir is not writable: $PkgDir  (pick another -PkgDir or -Base)"
+  }
+  $rootParent = [IO.Path]::GetDirectoryName($Root)
+  if ($rootParent -and -not (Test-Writable $rootParent)) {
+    throw "the root's parent is not writable: $rootParent  (pick another -Root or -Base)"
+  }
 
-Write-Host "== phase 1: install the Cygwin tree (no admin) =="
-$p = Start-Process -FilePath $SetupExe -ArgumentList $setupArgs -Wait -NoNewWindow -PassThru
-if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode); see $Root\var\log\setup.log.full" }
-if (-not (Test-Path $NewBash)) { throw "new tree bash missing: $NewBash (did the install finish?)" }
+  New-Item -ItemType Directory -Force -Path $PkgDir | Out-Null
+  $dest = Join-Path $PkgDir 'setup-x86_64.exe'
+  if ($import)   { Copy-Item -Force $import $dest; Write-Host "imported setup: $import" }
+  if ($download) { Write-Host "downloading setup from $download"; Invoke-WebRequest -Uri $download -OutFile $dest -UseBasicParsing }
+  if (-not (Test-Path $SetupExe)) { throw "setup program not found: $SetupExe" }
 
-# Phase 2: a bash runner executed by the NEW tree's bash. REPO is baked in as a
-# Windows path and converted with the new tree's own cygpath.
-$tmp = Join-Path $Root 'tmp'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
-$runnerWin = Join-Path $tmp 'install-all-mta.sh'
-$startLine = if ($NoStart) { '' } else { '"$REPO/bin/postfix-user-launch.sh" start' }
-$runner = @"
+  # The setup must be a real Windows program. A proxy error page or a truncated
+  # download would fail to launch; catch it here with a clear message.
+  $fi = Get-Item $SetupExe
+  $mz = [System.IO.File]::ReadAllBytes($SetupExe) | Select-Object -First 2
+  if ($fi.Length -lt 100000 -or $mz[0] -ne 0x4D -or $mz[1] -ne 0x5A) {
+    throw "setup-x86_64.exe is not a valid Windows program (size=$($fi.Length) bytes, header=$($mz -join ',') want 77,90=MZ); a proxy page or partial download? point -SetupExe at a known-good copy"
+  }
+
+  Write-Host "== phase 1: install the Cygwin tree (no admin) =="
+  $p = Start-Process -FilePath $SetupExe -ArgumentList $setupArgs -Wait -NoNewWindow -PassThru
+  if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode); see $Root\var\log\setup.log.full" }
+  if (-not (Test-Path $NewBash)) {
+    throw ("setup returned success but produced no tree (no $NewBash). On a locked-down box " +
+           "this usually means security software blocked the freshly downloaded setup, or this " +
+           "machine's Cygwin cannot run a current setup; try -SetupExe with the setup-x86_64.exe " +
+           "already installed here.")
+  }
+
+  # Phase 2: a bash runner executed by the NEW tree's bash. REPO is baked in as a
+  # Windows path and converted with the new tree's own cygpath. The runner tees
+  # its output to a log in the tree so a phase-2 failure is recoverable.
+  $tmp = Join-Path $Root 'tmp'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
+  $runnerWin = Join-Path $tmp 'install-all-mta.sh'
+  $mtaLog    = Join-Path $tmp 'install-all-mta.log'
+  $startLine = if ($NoStart) { '' } else { '"$REPO/bin/postfix-user-launch.sh" start' }
+  $runner = @"
 #!/bin/bash
 set -e
 export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+exec > >(tee /tmp/install-all-mta.log) 2>&1
 REPO=`$(cygpath -u '$Here')
 "`$REPO/bin/install-packages.sh"
 "`$REPO/bin/postfix-user-setup.sh"
 $startLine
 echo "install-all: MTA phase done"
 "@
-[IO.File]::WriteAllText($runnerWin, ($runner -replace "`r`n","`n"))
+  [IO.File]::WriteAllText($runnerWin, ($runner -replace "`r`n","`n"))
 
-Write-Host "== phase 2: install and start the MTA inside the new tree =="
-$p2 = Start-Process -FilePath $NewBash -ArgumentList $runnerWin -Wait -NoNewWindow -PassThru
-if ($p2.ExitCode -ne 0) { throw "MTA phase failed inside the new tree (exit $($p2.ExitCode))" }
+  Write-Host "== phase 2: install and start the MTA inside the new tree =="
+  $p2 = Start-Process -FilePath $NewBash -ArgumentList $runnerWin -Wait -NoNewWindow -PassThru
+  if ($p2.ExitCode -ne 0) {
+    Write-Host "runner log: $mtaLog  (last lines below)"
+    if (Test-Path $mtaLog) { Get-Content $mtaLog -Tail 25 }
+    throw "MTA phase failed inside the new tree (exit $($p2.ExitCode))"
+  }
 
-if ($Shortcut)  { & (Join-Path $Here 'bin\install-mintty-shortcut.ps1') -Base $Base }
-if ($LogonTask) { & (Join-Path $Here 'bin\install-logon-task.ps1') }
+  if ($Shortcut)  { & (Join-Path $Here 'bin\install-mintty-shortcut.ps1') -Base $Base }
+  if ($LogonTask) { & (Join-Path $Here 'bin\install-logon-task.ps1') }
 
-Write-Host "install-all: done. Replica at $Root"
+  Write-Host "install-all: done. Replica at $Root"

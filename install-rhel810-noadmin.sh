@@ -271,11 +271,39 @@ fi
 [ -f "$RUN_EXE" ] || die "setup program not found: $SETUP_EXE
   download setup-x86_64.exe into $SETUP_DIR, or point --setup-exe at it"
 
+# Whatever we obtained must be a real Windows program. A proxy error page or a
+# truncated download would later exec as "Bad address" or "cannot execute", so
+# catch it here with a clear message instead.
+setup_sz=$(wc -c < "$RUN_EXE" 2>/dev/null || echo 0)
+setup_hdr=$(head -c2 "$RUN_EXE" 2>/dev/null)
+if [ "$setup_hdr" != MZ ] || [ "${setup_sz:-0}" -lt 100000 ]; then
+	err "setup-x86_64.exe is not a valid Windows program (size=$setup_sz bytes, header='$setup_hdr')"
+	die "bad setup at $SETUP_EXE, likely a proxy page or partial download; point --setup-exe at a known-good copy"
+fi
+
 [ "$VERBOSE" -ge 1 ] && err "exec: $RUN_EXE ${setup_args[*]}"
 
-# -X is required (the archived setup.ini is unsigned).
-if "$RUN_EXE" "${setup_args[@]}"; then
+# -X is required (the archived setup.ini is unsigned). setup blocks until it is
+# done, so afterward the new tree's bash must exist. A zero exit with no tree
+# (e.g. an exec that faulted with "Bad address" on a locked-down box) is NOT
+# success -- report it, with everything needed to see why.
+rc=0
+"$RUN_EXE" "${setup_args[@]}" || rc=$?
+root_bash=$(win2posix "$ROOT")/bin/bash.exe
+if [ "$rc" = 0 ] && [ -f "$root_bash" ]; then
 	[ "$TERSE" = 1 ] || printf 'setup finished; log: %s\\var\\log\\setup.log.full\n' "$ROOT"
 else
-	die "setup exited non-zero ($?); see $ROOT\\var\\log\\setup.log.full"
+	err "setup did not produce a working tree (exit $rc; $ROOT\\bin\\bash.exe $([ -f "$root_bash" ] && echo present || echo MISSING))"
+	setup_log=$(win2posix "$ROOT")/var/log/setup.log.full
+	if [ -f "$setup_log" ]; then
+		err "-- tail of setup.log.full --"; tail -20 "$setup_log" >&2
+	else
+		err "-- no setup.log.full: setup never got far enough to write one --"
+	fi
+	if [ "$rc" = 0 ]; then
+		err "exit 0 with no tree usually means the .exe could not run: security software"
+		err "blocking a freshly downloaded setup, or this Cygwin too old for a current setup."
+		err "try --setup-exe pointing at the setup-x86_64.exe already installed on this machine."
+	fi
+	die "setup failed; see the diagnostics above and $ROOT\\var\\log\\setup.log.full"
 fi
