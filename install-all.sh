@@ -140,7 +140,11 @@ build_runner() {
 	printf "REPO=\$(cygpath -u '%s')\n" "$REPO_WIN"
 	printf '"$REPO/bin/install-packages.sh" %s\n' "$vflag"
 	printf '"$REPO/bin/postfix-user-setup.sh" %s\n' "$vflag"
-	[ "$NO_START" = 1 ] || printf '"$REPO/bin/postfix-user-launch.sh" start %s\n' "$vflag"
+	if [ "$NO_START" = 1 ]; then
+		printf '"$REPO/bin/postfix-user-launch.sh" stop %s\n' "$vflag"
+	else
+		printf '"$REPO/bin/postfix-user-launch.sh" restart %s\n' "$vflag"
+	fi
 	echo 'echo "install-all: MTA phase done"'
 }
 
@@ -164,6 +168,14 @@ if [ "$DRY_RUN" = 1 ]; then
 	[ "$WANT_SHORTCUT" = 1 ] && say "then: install-mintty-shortcut.ps1 -Base $BASE_WIN"
 	[ "$WANT_LOGON" = 1 ]    && say "then: install-logon-task.ps1"
 	exit 0
+fi
+
+# Reap any postfix still running from a previous install of this tree before
+# setup rebuilds it: a stray master holds port 25 and its files. Path-scoped to
+# $ROOT by full image path, so another tree's postfix is left alone.
+if [ -f "$(cygpath -u "$NEWBASH_WIN")" ]; then
+	say "== preflight: reap any postfix left running under $ROOT =="
+	"$PS" -NoProfile -ExecutionPolicy Bypass -File "$REPO_WIN\\bin\\stop-tree-postfix.ps1" -Root "$ROOT" || true
 fi
 
 say "== phase 1: install the Cygwin tree =="

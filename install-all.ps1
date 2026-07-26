@@ -167,10 +167,12 @@ if ($DryRun) {
   if ($import)   { Write-Host "would copy : $import" }
   if ($download) { Write-Host "would download: $download" }
   Write-Host ("would run : {0} {1}" -f $SetupExe, ($setupArgs -join ' '))
+  Write-Host "== preflight: reap any postfix left running under $Root =="
+  Write-Host "  bin/stop-tree-postfix.ps1 -Root $Root"
   Write-Host "== phase 2: run inside $Root via its own bash =="
   Write-Host "  bin/install-packages.sh"
   Write-Host "  bin/postfix-user-setup.sh"
-  if (-not $NoStart) { Write-Host "  bin/postfix-user-launch.sh start" }
+  if ($NoStart) { Write-Host "  bin/postfix-user-launch.sh stop" } else { Write-Host "  bin/postfix-user-launch.sh restart" }
   if ($Shortcut)  { Write-Host "then: install-mintty-shortcut.ps1 -Base $Base" }
   if ($LogonTask) { Write-Host "then: install-logon-task.ps1" }
   Stop-Log
@@ -216,6 +218,15 @@ if (-not (Test-Writable $PkgDir)) {
     Write-Host "         unless packages are already staged in $PkgDir, setup will install nothing."
   }
 
+  # Reap any Postfix still running from a previous install of this tree. A stray
+  # master holds port 25 and its files, which would break both the re-install and
+  # a clean start; it is also what turned an earlier hung run into a cascade of
+  # openpty failures. Scoped to $Root by full image path, so another tree's (or a
+  # service's) postfix is left alone.
+  if (Test-Path $NewBash) {
+    & (Join-Path $Here 'bin\stop-tree-postfix.ps1') -Root $Root
+  }
+
   Write-Host "== phase 1: install the Cygwin tree (no admin) =="
   try {
     $p = Start-Process -FilePath $SetupExe -ArgumentList $setupArgs -Wait -NoNewWindow -PassThru
@@ -258,7 +269,7 @@ if (-not (Test-Writable $PkgDir)) {
   $tmp = Join-Path $Root 'tmp'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   $runnerWin = Join-Path $tmp 'install-all-mta.sh'
   $mtaLog    = Join-Path $tmp 'install-all-mta.log'
-  $startLine = if ($NoStart) { '' } else { '"$REPO/bin/postfix-user-launch.sh" start' }
+  $startLine = if ($NoStart) { '"$REPO/bin/postfix-user-launch.sh" stop' } else { '"$REPO/bin/postfix-user-launch.sh" restart' }
   $runner = @"
 #!/bin/bash
 set -e

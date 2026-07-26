@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Start, stop, or check the unprivileged Postfix master with no service manager.
-# A per-user logon Scheduled Task calls "start"; you can also run it by hand.
-# master runs with -d (foreground) under nohup so this launcher owns the pid; a
-# bare 3.x master would self-detach and we would lose track.
+# Start, stop, restart, or check the unprivileged Postfix master with no service
+# manager. A per-user logon Scheduled Task calls "start"; you can also run it by
+# hand. master runs with -d (foreground) in its own session via setsid, and
+# master.pid records the running pid. stop reaps the whole instance: the tracked
+# master, any orphaned daemons, and the stale pid/lock files.
 set -u
 export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
 
@@ -15,7 +16,7 @@ usage() {
 Start, stop, or check the unprivileged Postfix master.
 
 Usage:
-  $PROG [options] (start | stop | status)
+  $PROG [options] (start | stop | restart | status)
 
 Options:
   -c, --config-dir DIR  Postfix config directory [default: /etc/postfix]
@@ -46,12 +47,12 @@ while [ $# -gt 0 ]; do
 		-d|--debug)        DEBUG=1; VERBOSE=$((VERBOSE + 1)); shift ;;
 		-h|--help)         usage; exit 0 ;;
 		--version)         printf '%s\n' "$VERSION"; exit 0 ;;
-		start|stop|status) [ -z "$ACTION" ] || die_usage "one command only"; ACTION=$1; shift ;;
+		start|stop|restart|status) [ -z "$ACTION" ] || die_usage "one command only"; ACTION=$1; shift ;;
 		-*)                die_usage "unknown option: $1 (try --help)" ;;
 		*)                 die_usage "unknown command: $1 (try --help)" ;;
 	esac
 done
-[ -n "$ACTION" ] || die_usage "need a command: start, stop, or status"
+[ -n "$ACTION" ] || die_usage "need a command: start, stop, restart, or status"
 [ "$DEBUG" = 1 ] && set -x
 
 say() { [ "$TERSE" = 1 ] || printf '%s\n' "$*"; }
@@ -99,9 +100,9 @@ finally: s.close()" 2>&1
 	} >&2
 }
 
-case $ACTION in
-start)
-	if is_running; then say "postfix already running ($CONFIG_DIR, pid $(master_pid))"; exit 0; fi
+do_start() {
+	if is_running; then say "postfix already running ($CONFIG_DIR, pid $(master_pid))"; return 0; fi
+	local log
 	log=$(postconf -c "$CONFIG_DIR" -h maillog_file 2>/dev/null)
 	[ -n "$log" ] || log=/var/log/maillog
 	mkdir -p "$(dirname "$log")"
@@ -119,19 +120,41 @@ start)
 	else
 		err "failed to start; maillog is often empty here (see below for why)"
 		diag_start
-		exit 1
+		return 1
 	fi
-	;;
-stop)
-	pid=$(master_pid)
-	if [ -n "$pid" ]; then
-		kill "$pid" 2>/dev/null || true
-		say "postfix stopped (pid $pid)"
-	else
-		say "postfix not running"
+}
+
+do_stop() {
+	local dd pids tp still p dt
+	dd=$(postconf -c "$CONFIG_DIR" -h daemon_directory 2>/dev/null); [ -n "$dd" ] || dd=/usr/libexec/postfix
+	# Every postfix daemon for this tree reparented to init (ppid 1): the setsid
+	# master and any children orphaned when a master was killed. ps here lists only
+	# this tree's processes, so matching the daemon path is scope enough.
+	pids=$(ps -ef 2>/dev/null | awk -v d="$dd/" '$3==1 && index($0,d){print $2}')
+	# Include the tracked master in case it has not reparented yet.
+	tp=$(master_pid); [ -n "$tp" ] && kill -0 "$tp" 2>/dev/null && pids="$pids $tp"
+	pids=$(printf '%s\n' $pids | sort -un | sed '/^$/d')
+	if [ -n "$pids" ]; then
+		kill $pids 2>/dev/null || true
+		for _ in 1 2 3 4 5; do
+			still=
+			for p in $pids; do kill -0 "$p" 2>/dev/null && still="$still $p"; done
+			[ -z "$still" ] && break
+			sleep 1
+		done
+		[ -n "$still" ] && kill -9 $still 2>/dev/null || true
 	fi
-	;;
-status)
-	if is_running; then say "running (pid $(master_pid))"; exit 0; else say "stopped"; exit 1; fi
-	;;
+	# Clear stale bookkeeping so the next start does not trip on a dead pid or a
+	# left-behind lock.
+	dt=$(postconf -c "$CONFIG_DIR" -h data_directory 2>/dev/null)
+	rm -f "$(queue_dir)/pid/master.pid" 2>/dev/null
+	[ -n "$dt" ] && rm -f "$dt/master.lock" 2>/dev/null
+	if [ -n "$pids" ]; then say "postfix stopped ($(echo $pids))"; else say "postfix not running"; fi
+}
+
+case $ACTION in
+	start)   do_start ;;
+	stop)    do_stop ;;
+	restart) do_stop; sleep 1; do_start ;;
+	status)  if is_running; then say "running (pid $(master_pid))"; exit 0; else say "stopped"; exit 1; fi ;;
 esac
