@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""
+sendmail-compatible shim for the RHEL 8.10 Cygwin replica.
+
+Postfix's receiving side (a loopback smtpd) works fine here; its local
+submission side (postdrop -> maildrop -> pickup) does not, because Cygwin won't
+honor setgid-on-exec to give an ordinary user the postdrop group, and the pickup
+FIFO isn't a real socket. So instead of dropping a file in the maildrop queue,
+this reads the message on stdin and hands it to the smtpd over SMTP. Anything
+that calls /usr/sbin/sendmail -- mailx, cron, an app under test -- submits mail
+with no special privilege.
+
+Host and port come from SENDMAIL_SMTP_HOST / SENDMAIL_SMTP_PORT so the same file
+serves a normal install (127.0.0.1:25) and a side-by-side test instance
+(127.0.0.1:2525) without editing. The installer seds these defaults to match the
+instance it configures.
+
+Accepts the sendmail flags that actually get used: recipients as operands, -t
+(pull recipients from the headers), -f/-r (envelope sender), -i/-oi and the
+other -o toggles (ignored), -F (full name, ignored), and -- to end options.
+Unknown flags are ignored rather than fatal, matching sendmail's forgiving CLI.
+"""
+import os
+import sys
+import smtplib
+from email.parser import Parser
+from email.utils import getaddresses, parseaddr
+
+SMTP_HOST = os.environ.get("SENDMAIL_SMTP_HOST", "127.0.0.1")
+SMTP_PORT = int(os.environ.get("SENDMAIL_SMTP_PORT", "25"))
+DEFAULT_DOMAIN = "localdomain"
+# Flags that consume the following argument; we skip their value.
+VALUE_FLAGS = {"-F", "-B", "-N", "-V", "-X", "-p", "-h", "-O"}
+
+
+def parse_args(argv):
+    recipients = []
+    sender = None
+    use_t = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--":
+            recipients.extend(argv[i + 1:])
+            break
+        elif a == "-t":
+            use_t = True
+        elif a in ("-f", "-r"):
+            i += 1
+            if i < len(argv):
+                sender = argv[i]
+        elif a.startswith("-f") or a.startswith("-r"):
+            sender = a[2:]
+        elif a in VALUE_FLAGS:
+            i += 1  # skip the flag's value
+        elif a.startswith("-"):
+            pass  # -i, -oi, -oem, -bm, and any other toggle: ignore
+        else:
+            recipients.append(a)
+        i += 1
+    return recipients, sender, use_t
+
+
+def main():
+    recipients, sender, use_t = parse_args(sys.argv[1:])
+    raw = sys.stdin.buffer.read()
+    msg = Parser().parsestr(raw.decode("utf-8", "replace"))
+
+    if use_t:
+        header_rcpts = []
+        for hdr in ("To", "Cc", "Bcc"):
+            header_rcpts += [addr for _, addr in getaddresses(msg.get_all(hdr, []))]
+        recipients += [a for a in header_rcpts if a]
+        if msg.get("Bcc") is not None:
+            del msg["Bcc"]  # never expose Bcc to recipients
+            raw = msg.as_bytes()
+
+    if not sender:
+        _, sender = parseaddr(msg.get("From", ""))
+    if not sender:
+        user = os.environ.get("USER") or os.environ.get("LOGNAME") or "postmaster"
+        sender = "%s@%s" % (user, DEFAULT_DOMAIN)
+
+    # Bare usernames become user@localdomain so smtpd routes them locally.
+    recipients = [r if "@" in r else "%s@%s" % (r, DEFAULT_DOMAIN) for r in recipients]
+
+    if not recipients:
+        sys.stderr.write("sendmail-smtp-shim: no recipients given\n")
+        return 1
+
+    try:
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+        try:
+            server.sendmail(sender, recipients, raw)
+        finally:
+            server.quit()
+    except Exception as exc:
+        sys.stderr.write("sendmail-smtp-shim: SMTP submission to %s:%d failed: %s\n"
+                         % (SMTP_HOST, SMTP_PORT, exc))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,5 @@
+category: Mail
+requires: bash cygwin libdb5.3 libmariadb3 libopenldap2_4_2 libpcre1 libpq5 libsasl2_3 libsqlite3_0 libssl1.1 perl_base alternatives coreutils csih cygrunsrv editrights getent grep sed util-linux
+sdesc: "Mail Transfer Agent"
+ldesc: "Postfix is a Mail Transfer Agent from Wietse Venema."
+

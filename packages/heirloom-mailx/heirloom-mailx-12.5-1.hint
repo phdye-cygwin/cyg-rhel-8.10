@@ -1,0 +1,10 @@
+category: Mail
+requires: cygwin libiconv2 postfix
+sdesc: "Heirloom mailx (nail), the mail user agent RHEL ships as /bin/mailx"
+ldesc: "Heirloom mailx, formerly known as nail, is a BSD Mail derivative
+with MIME, IMAP, POP3, SMTP and S/MIME support. This is the exact program
+Red Hat Enterprise Linux 8 ships as the 'mailx' package (upstream 12.5), so it
+gives a RHEL-parity /usr/bin/mailx with the 'mail' and 'Mail' aliases. It sends
+through any sendmail-compatible MTA; on this replica that is Postfix at
+/usr/sbin/sendmail."
+

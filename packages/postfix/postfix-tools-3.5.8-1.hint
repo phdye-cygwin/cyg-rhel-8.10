@@ -1,0 +1,7 @@
+category: Mail
+requires: cygwin 
+sdesc: "Mail Transfer Agent (test tools)"
+ldesc: "Postfix is a Mail Transfer Agent from Wietse Venema.
+This package contains stand-alone SMTP and QMQP test tools."
+external-source: postfix
+

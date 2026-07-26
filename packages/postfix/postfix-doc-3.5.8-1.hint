@@ -1,0 +1,7 @@
+category: Mail
+requires:  
+sdesc: "Mail Transfer Agent (documentation)"
+ldesc: "Postfix is a Mail Transfer Agent from Wietse Venema.
+This package contains the README files and HTML documentation."
+external-source: postfix
+

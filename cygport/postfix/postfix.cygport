@@ -1,0 +1,216 @@
+# cygport script for postfix (Cygwin port forward-ported to 3.5.8)
+#
+# Matches the Postfix version shipped in RHEL 8.10 (postfix-3.5.8-7.el8).
+# Cygwin porting changes carried in postfix-3.5.8-1-cygwinport.patch, which is
+# the 2.11.9-1 Cygwin port (by Christian Franke) forward-ported to 3.5.8:
+#   - makedefs: CYGWIN_NT-* -> SYSTYPE=CYGWIN2x (widened to match Cygwin 3.x)
+#   - src/util/sys_defs.h, sys_compat.c: CYGWIN2x platform stanza, root uid/gid
+#     emulation, and SO_PEERCRED handshake disable for the AF_UNIX emulation
+#   - relaxed strict gid/fmode checks, setsid/setrlimit guards
+#   - CYGWIN-PATCHES/{README,main.cf,postfix-config} packaging glue
+NAME=postfix
+VERSION=3.5.8
+RELEASE=1
+
+SUMMARY="Mail Transfer Agent"
+
+DESCRIPTION="Postfix is a Mail Transfer Agent from Wietse Venema."
+
+CATEGORY="Mail"
+REQUIRES="alternatives coreutils csih cygrunsrv editrights getent grep sed util-linux"
+
+HOMEPAGE="http://www.postfix.org/"
+# 3.5.8 is a retired point release; upstream mirrors keep only the newest of
+# each series.  The pristine tarball here is Source0 from postfix-3.5.8-7.el8
+# (sha256 22582628cf3edc18c5155c9ff44543dd95a9435fb68135d76a99f572cb07456f).
+SRC_URI="ftp://ftp.porcupine.org/mirrors/postfix-release/official/postfix-${PV}.tar.gz"
+PATCH_URI="postfix-3.5.8-1-cygwinport.patch"
+
+PKG_NAMES="postfix postfix-doc postfix-tools"
+
+postfix_doc_SUMMARY="${SUMMARY} (documentation)"
+postfix_doc_DESCRIPTION="${DESCRIPTION}
+This package contains the README files and HTML documentation."
+
+postfix_tools_SUMMARY="${SUMMARY} (test tools)"
+postfix_tools_DESCRIPTION="${DESCRIPTION}
+This package contains stand-alone SMTP and QMQP test tools."
+
+postfix_CONTENTS="
+	--exclude=usr/sbin/qmqp-s*.exe
+	--exclude=usr/sbin/smtp-s*.exe
+	--exclude=usr/share/doc/postfix/HISTORY.bz2
+	--exclude=usr/share/doc/postfix/README_FILES
+	--exclude=usr/share/doc/postfix/html
+	--exclude=usr/share/man/man1/qmqp-s*.1.gz
+	--exclude=usr/share/man/man1/smtp-s*.1.gz
+	etc usr var
+"
+postfix_doc_CONTENTS="
+	usr/share/doc/postfix/HISTORY.bz2
+	usr/share/doc/postfix/README_FILES
+	usr/share/doc/postfix/html
+"
+postfix_tools_CONTENTS="
+	usr/sbin/qmqp-s*.exe
+	usr/sbin/smtp-s*.exe
+	usr/share/man/man1/qmqp-s*.1.gz
+	usr/share/man/man1/smtp-s*.1.gz
+"
+
+RESTRICT="postinst_doc" # Skip COPYRIGHT file
+
+! cross_compiling || error "postfix.cygport: cross-compiling is not supported"
+
+src_compile() {
+	cd ${B}
+	lndirs
+	rm -fv Makefile
+
+	local CCARGS AUXLIBS
+
+	# Postfix 3.x master opens more listener fds than 2.11 did; the select()
+	# event loop caps at FD_SETSIZE, which is 64 on Cygwin and makes master
+	# panic "event_enable_read: bad file descriptor: 64". The port's
+	# sys_defs.h tries to bump it to 128 but that does not reach events.c, so
+	# force a larger fd_set from the command line for every translation unit.
+	CCARGS+=" -DFD_SETSIZE=1024"
+
+	# libdb (also set via makedefs SYSLIBS -ldb)
+	#CCARGS+=" -DHAS_DB"
+	#AUXLIBS+=" -ldb"
+
+	# libpcre
+	CCARGS+=" -DHAS_PCRE"
+	AUXLIBS+=" -lpcre"
+
+	# openssl
+	CCARGS+=" -DUSE_TLS";
+	AUXLIBS+=" -lssl -lcrypto"
+
+	# libsasl2
+	CCARGS+=" -DUSE_SASL_AUTH -DUSE_CYRUS_SASL -I/usr/include/sasl"
+	AUXLIBS+=" -lsasl2"
+
+	# openldap
+	CCARGS+=" -DHAS_LDAP"
+	AUXLIBS+=" -lldap -llber"
+
+	# libsqlite3
+	CCARGS+=" -DHAS_SQLITE"
+	AUXLIBS+=" -lsqlite3 -lpthread"
+
+	# libmysqlclient
+	CCARGS+=" -DHAS_MYSQL -I/usr/include/mysql"
+	AUXLIBS+=" -lmysqlclient -lz -lm"
+
+	# libpq
+	CCARGS+=" -DHAS_PGSQL -I/usr/include/postgresql"
+	AUXLIBS+=" -lpq"
+
+	cygmake -f Makefile.init \
+		CCARGS="${CCARGS# }" AUXLIBS="${AUXLIBS# }" \
+		DEBUG="-ggdb -fdebug-prefix-map=${B}=/usr/src/debug/${PF}"
+
+	# Create Cygwin versions of master.cf, postfix-files and postfix-script
+	mkdir -p cygwin || exit 1
+
+	# Use port numbers for services possibly missing in /etc/services
+	sed	-e '/#smtp .*postscreen$/i\# Cygwin: postscreen does not work because it requires fd passing' \
+		-e 's,^#submission ,#587       ,' \
+		-e 's,^#smtps ,#465   ,' \
+		conf/master.cf > cygwin/master.cf || exit 1
+
+	# Replace root by admin uid, fix perms, remove missing or optional files
+	sed 	-e '1i# Modified for Cygwin.' \
+		-e 's,^\(\$config_directory/.*LICENSE:.*\)$,#\1,' \
+		-e 's,^\(\$config_directory/.*\.default:.*\)$,#\1,' \
+		-e 's,^\(\$config_directory/.*\.out:.*\)$,#\1,' \
+		-e 's,^\(\$manpage_directory.*\)$,#\1,' \
+		-e 's,^\(\$readme_directory.*\)$,#\1,' \
+		-e 's,^\(\$sample_directory.*\)$,#\1,' \
+		-e 's,^\(\$html_directory.*\)$,#\1,' \
+		-e 's,^\(\$newaliases_path:.*\)$,#\1,' \
+		-e 's,^\(\$mailq_path:.*\)$,#\1,' \
+		-e 's,:\$setgid_group:2755:,:$setgid_group:755:,' \
+		-e 's,:root:,:SYSTEM:,' \
+		conf/postfix-files > cygwin/postfix-files || exit 1
+
+	sed 	-e '2i# Modified for Cygwin.' \
+		-e 's,grep " root ",grep -i " SYSTEM ",' \
+		-e 's, -user root , -user SYSTEM ,' \
+		-e 's, not owned by root:, not owned by SYSTEM:,' \
+		-e 's, -perm -02111 , -perm -0111 ', \
+		conf/postfix-script > cygwin/postfix-script || exit 1
+
+	# Add postconf path
+	sed	-e 's,{postconf ,{/usr/sbin/postconf ,' \
+		auxiliary/qshape/qshape.pl > cygwin/qshape || exit 1
+}
+
+src_install() {
+	cd ${B}
+	sh postfix-install -non-interactive -package \
+		install_root=${D} \
+		html_directory=/usr/share/doc/postfix/html \
+		manpage_directory=/usr/share/man \
+		readme_directory=/usr/share/doc/postfix/README_FILES \
+		|| exit 1
+
+	# Add test tools
+	dosbin bin/posttls-finger.exe    bin/qmqp-s*.exe    bin/smtp-s*.exe
+	doman  man/man1/posttls-finger.1 man/man1/qmqp-s*.1 man/man1/smtp-s*.1
+	dosbin cygwin/qshape
+	doman  man/man1/qshape.1
+
+	# Add Cygwin config script
+	cd ${C}
+	dobin postfix-config
+
+	# Compress large changelog, skip unrelated COPYRIGHT file (see RESTRICT)
+	cd ${S}
+	dodoc HISTORY
+	cd ${D}
+	bzip2 -9v usr/share/doc/postfix/HISTORY
+
+	# Move license, samples and build info from config to doc directory
+	dodoc etc/postfix/*LICENSE etc/postfix/*.cf.default etc/postfix/makedefs.out
+	rm -v etc/postfix/*LICENSE etc/postfix/*.cf.default etc/postfix/makedefs.out
+	newdoc etc/postfix/main.cf   main.cf.dist
+	newdoc etc/postfix/master.cf master.cf.dist
+
+	# Replace original files by Cygwin specific versions
+	cd ${B}
+	insinto /etc/postfix
+	doins cygwin/master.cf
+	cd ${C}
+	doins main.cf
+	cd ${D}
+	mv -v usr/libexec/postfix/postfix-files  usr/libexec/postfix/postfix-files.dist
+	mv -v usr/libexec/postfix/postfix-script usr/libexec/postfix/postfix-script.dist
+	cd ${B}
+	insinto /usr/libexec/postfix
+	doins cygwin/postfix-files
+	exeinto /usr/libexec/postfix
+	doexe cygwin/postfix-script
+
+	# /etc/postfix/* -> /etc/postfix/etc/defaults
+	cd ${D}
+	make_etc_defaults $(ls -d etc/postfix/* | sed 's,^,/,')
+
+	# Document our samples
+	dosym ../../../../etc/defaults/etc/postfix/main.cf   /usr/share/doc/postfix/main.cf.cygwin
+	dosym ../../../../etc/defaults/etc/postfix/master.cf /usr/share/doc/postfix/master.cf.cygwin
+
+	# Avoid conflicts with other sendmail emulations
+	# alternatives(8) are set by /usr/bin/postfix-config
+	rm -v usr/bin/mailq usr/share/man/man1/mailq.1
+	rm -v usr/bin/newaliases usr/share/man/man1/newaliases.1
+
+	mv -v usr/sbin/sendmail.exe         usr/sbin/sendmail.postfix.exe
+	mv -v usr/share/man/man1/sendmail.1 usr/share/man/man1/sendmail.postfix.1
+	mv -v usr/share/man/man5/aliases.5  usr/share/man/man5/aliases.postfix.5
+
+	# Keep dirtree
+	keepdir /etc/postfix /var/lib/postfix $(ls -d var/spool/postfix/* | sed 's,^,/,')
+}
