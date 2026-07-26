@@ -250,8 +250,11 @@ if (-not (Test-Writable $PkgDir)) {
   }
 
   # Phase 2: a bash runner executed by the NEW tree's bash. REPO is baked in as a
-  # Windows path and converted with the new tree's own cygpath. The runner tees
-  # its output to a log in the tree so a phase-2 failure is recoverable.
+  # Windows path and converted with the new tree's own cygpath. The runner sends
+  # its output to a plain log file in the tree (not a tee pipe): the postfix
+  # master it starts would inherit a process-substitution fd and hold it open,
+  # so tee never sees EOF and Start-Process -Wait would hang forever. This side
+  # prints the log after the phase instead.
   $tmp = Join-Path $Root 'tmp'; New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   $runnerWin = Join-Path $tmp 'install-all-mta.sh'
   $mtaLog    = Join-Path $tmp 'install-all-mta.log'
@@ -260,7 +263,7 @@ if (-not (Test-Writable $PkgDir)) {
 #!/bin/bash
 set -e
 export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
-exec > >(tee /tmp/install-all-mta.log) 2>&1
+exec >/tmp/install-all-mta.log 2>&1
 REPO=`$(cygpath -u '$Here')
 "`$REPO/bin/install-packages.sh"
 "`$REPO/bin/postfix-user-setup.sh"
@@ -271,9 +274,8 @@ echo "install-all: MTA phase done"
 
   Write-Host "== phase 2: install and start the MTA inside the new tree =="
   $p2 = Start-Process -FilePath $NewBash -ArgumentList $runnerWin -Wait -NoNewWindow -PassThru
+  if (Test-Path $mtaLog) { Write-Host "-- phase-2 runner log --"; Get-Content $mtaLog }
   if ($p2.ExitCode -ne 0) {
-    Write-Host "runner log: $mtaLog  (last lines below)"
-    if (Test-Path $mtaLog) { Get-Content $mtaLog -Tail 25 }
     throw "MTA phase failed inside the new tree (exit $($p2.ExitCode))"
   }
 
@@ -287,6 +289,5 @@ echo "install-all: MTA phase done"
 if ($Log) {
   $sl = [IO.Path]::Combine($Root, 'var\log\setup.log.full')
   if (Test-There $sl)     { Write-Host "-- setup.log.full (tail) --"; Get-Content $sl -Tail 40 -ErrorAction SilentlyContinue }
-  if (Test-There $mtaLog) { Write-Host "-- phase-2 runner log --";    Get-Content $mtaLog -ErrorAction SilentlyContinue }
 }
 Stop-Log

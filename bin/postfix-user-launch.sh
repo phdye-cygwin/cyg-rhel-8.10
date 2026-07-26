@@ -106,7 +106,11 @@ start)
 	[ -n "$log" ] || log=/var/log/maillog
 	mkdir -p "$(dirname "$log")"
 	[ "$VERBOSE" -ge 1 ] && err "exec: $MASTER -c $CONFIG_DIR -d  (log: $log)"
-	nohup "$MASTER" -c "$CONFIG_DIR" -d >>"$log" 2>&1 &
+	# </dev/null so master shares no stream with a supervising pipe: the install
+	# harness reads phase-2 output through a pipe, and a daemon that keeps it open
+	# would stall the harness at exit. All three std streams go to the maillog or
+	# /dev/null; the daemon holds nothing the parent is waiting to drain.
+	nohup "$MASTER" -c "$CONFIG_DIR" -d >>"$log" 2>&1 </dev/null &
 	sleep 2
 	if is_running; then
 		say "postfix started ($CONFIG_DIR, pid $(master_pid))"
