@@ -27,6 +27,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$Log,
   [Parameter(Mandatory=$true)][string]$File,
+  [switch]$Redact,
+  [string[]]$RedactAlso = @(),
   [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
 )
 
@@ -52,6 +54,14 @@ $inner = ('powershell -NoProfile -ExecutionPolicy Bypass -File "{0}" {1} 2>&1' -
 
 & $env:ComSpec /c $inner | Tee-Object -FilePath $Log
 $rc = $LASTEXITCODE
+
+if ($Redact) {
+  $rdir = Split-Path $Log -Parent; if (-not $rdir) { $rdir = '.' }
+  $red = [IO.Path]::Combine($rdir, [IO.Path]::GetFileNameWithoutExtension($Log) + '.redacted' + [IO.Path]::GetExtension($Log))
+  & (Join-Path $PSScriptRoot 'scrub-log.ps1') -Path $Log -Out $red -Also $RedactAlso
+  Write-Host "run-logged: redacted copy for sharing -> $red"
+}
+
 Write-Host ""
 Write-Host ("run-logged: {0} exited {1}; full log at {2}" -f (Split-Path $File -Leaf), $rc, $Log)
 exit $rc
