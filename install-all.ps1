@@ -172,8 +172,21 @@ if (-not (Test-Writable $PkgDir)) {
     throw "setup-x86_64.exe is not a valid Windows program (size=$($fi.Length) bytes, header=$($mz -join ',') want 77,90=MZ); a proxy page or partial download? point -SetupExe at a known-good copy"
   }
 
+  # Strip the mark-of-the-web. A downloaded exe carries a Zone.Identifier that
+  # SmartScreen / some policies refuse to launch ("Access is denied"); removing
+  # it clears that class of block. Harmless when there is no tag.
+  try { Unblock-File -LiteralPath $SetupExe -ErrorAction SilentlyContinue } catch {}
+
   Write-Host "== phase 1: install the Cygwin tree (no admin) =="
-  $p = Start-Process -FilePath $SetupExe -ArgumentList $setupArgs -Wait -NoNewWindow -PassThru
+  try {
+    $p = Start-Process -FilePath $SetupExe -ArgumentList $setupArgs -Wait -NoNewWindow -PassThru
+  } catch {
+    throw ("could not launch setup ($($_.Exception.Message)). On a managed machine this is " +
+           "application control (AppLocker/WDAC) or SmartScreen refusing a downloaded exe. Try: " +
+           "Unblock-File '$SetupExe' then re-run; if still blocked, pass -SetupExe pointing at a " +
+           "setup-x86_64.exe your IT already allows, such as the one bundled with the Cygwin " +
+           "already installed on this machine.")
+  }
   if ($p.ExitCode -ne 0) { throw "setup exited $($p.ExitCode); see $Root\var\log\setup.log.full" }
   if (-not (Test-Path $NewBash)) {
     throw ("setup returned success but produced no tree (no $NewBash). On a locked-down box " +

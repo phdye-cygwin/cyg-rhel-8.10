@@ -281,6 +281,11 @@ if [ "$setup_hdr" != MZ ] || [ "${setup_sz:-0}" -lt 100000 ]; then
 	die "bad setup at $SETUP_EXE, likely a proxy page or partial download; point --setup-exe at a known-good copy"
 fi
 
+# Strip the mark-of-the-web on a downloaded exe; some policies refuse to launch a
+# tagged file. Harmless when absent or when PowerShell is unavailable.
+ps=$(pshell)
+[ -f "$ps" ] && "$ps" -NoProfile -Command "Unblock-File -LiteralPath '$(cygpath -w "$RUN_EXE")' -ErrorAction SilentlyContinue" 2>/dev/null
+
 [ "$VERBOSE" -ge 1 ] && err "exec: $RUN_EXE ${setup_args[*]}"
 
 # -X is required (the archived setup.ini is unsigned). setup blocks until it is
