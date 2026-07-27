@@ -31,12 +31,17 @@ crosses through `cmd.exe`. Both sidestep the deadlock you would hit launching a
 replica binary straight from another Cygwin shell, where two `cygwin1.dll`
 instances collide.
 
-To capture a full log of a run, pass `install-all.ps1 -Log <path>` (the analog of
-Cygwin's `script`); it transcribes the run and folds in setup.log.full and the
-phase-2 output. Point it at a writable location such as your home directory --
-`C:\` root usually is not writable to a standard user, and the transcript then
-goes nowhere. From a Cygwin shell, wrap `./install-all.sh` with `script` as
-usual.
+To capture a full log, including the output of setup and the tree's own bash
+(which a PowerShell transcript silently drops), run through `bin/run-logged.ps1`:
+
+```powershell
+powershell -File bin\run-logged.ps1 -Redact -Log $env:TEMP\rhel-install.log -File .\install-all.ps1
+```
+
+It tees the whole run to the console and the log at once. `-Redact` also writes a
+`.redacted` copy with your host, user, and domain masked, for attaching to a bug
+report; `bin\scrub-log.ps1` does the same to a log you already have. From a Cygwin
+shell you can still wrap `./install-all.sh` with `script`.
 
 Prefer to run the phases yourself? The same steps by hand:
 
@@ -81,7 +86,11 @@ already on the machine; if not, the installer downloads it from cygwin.com. The
 scripts default to `C:\cyg-rhel-8.10`, with the Cygwin root at `cygwin64\` beside
 the setup program and package cache in `packages\`. Point `--base` (`-Base` for
 the `.ps1`) elsewhere to move the whole install; `--root` and `--pkg-dir`
-override each half on its own if you want them apart.
+override each half on its own if you want them apart. To relocate the install
+without editing anything tracked, set `CYG_RHEL_ROOT` and `CYG_RHEL_SETUP_DIR`;
+the tools read them, and a command-line `-Root`/`-PkgDir` still wins.
+`site-local.example.ps1` templates these (plus a log directory): copy it to
+`site-local.ps1`, which git ignores, and dot-source it.
 Network access to the Time Machine snapshot. No administrator rights.
 
 ## What each step does
@@ -133,13 +142,19 @@ install-all.ps1              native one-shot harness (no existing Cygwin needed)
 install-all.cmd              wrapper so install-all.ps1 runs from cmd or a click
 install-all.sh               one-shot harness from an existing Cygwin shell
 install-rhel810-noadmin.sh   setup wrapper (--no-admin, configurable root)
+site-local.example.ps1       template for per-site paths and log dir (copy to site-local.ps1)
 bin/install-packages.sh      unpack built postfix + mailx into the tree
 bin/postfix-user-setup.sh     configure Postfix to run as your user
-bin/postfix-user-launch.sh    start/stop/status the master, no service manager
+bin/postfix-user-launch.sh    start/stop/restart/status the master, no service manager
+bin/start-tree-postfix.ps1    start the MTA detached and console-less
+bin/stop-tree-postfix.ps1     reap any MTA left running under a tree
 bin/sendmail-smtp-shim        /usr/sbin/sendmail replacement, submits over SMTP
 bin/start-postfix.cmd         wrapper the logon task runs
 bin/install-logon-task.ps1    register the per-user logon task
 bin/install-mintty-shortcut.ps1  mintty terminal shortcut (base + Desktop)
+bin/run-logged.ps1            run a script, capturing all output (native + Cygwin) to a log
+bin/diag-mta.ps1              read-only probe for a stuck run (fds, process tree, logs)
+bin/scrub-log.ps1             mask host/user/domain in a log before sharing
 packages/                     built .tar.xz for postfix and mailx
 cygport/                      port sources, patches, pristine tarballs
 test/                         the isolated validation
