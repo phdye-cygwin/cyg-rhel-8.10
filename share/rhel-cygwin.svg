@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f3222"/>
+      <stop offset="1" stop-color="#08160f"/>
+    </linearGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6dbe45"/>
+      <stop offset="1" stop-color="#3f8f24"/>
+    </linearGradient>
+    <linearGradient id="hat" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff1a1a"/>
+      <stop offset="1" stop-color="#b50000"/>
+    </linearGradient>
+    <linearGradient id="brim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e00000"/>
+      <stop offset="1" stop-color="#8f0000"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Cygwin-green rounded badge with dark terminal field -->
+  <rect x="10" y="10" width="236" height="236" rx="48" fill="url(#ring)"/>
+  <rect x="26" y="26" width="204" height="204" rx="34" fill="url(#field)"/>
+
+  <!-- RHEL red fedora -->
+  <g>
+    <!-- brim -->
+    <path d="M44 140 C44 129 74 124 128 124 C182 124 212 129 212 140
+             C212 154 174 160 128 160 C82 160 44 154 44 140 Z" fill="url(#brim)"/>
+    <!-- crown -->
+    <path d="M88 132 C85 100 90 66 104 59 C117 52 139 52 152 59
+             C166 66 171 100 168 132 C150 138 106 138 88 132 Z" fill="url(#hat)"/>
+    <!-- hatband -->
+    <path d="M87 122 C108 129 148 129 169 122 C168 129 167 133 166 136
+             C147 142 109 142 90 136 C89 133 88 129 87 122 Z" fill="#5c0000"/>
+    <!-- brim front highlight -->
+    <path d="M60 143 C90 151 166 151 196 143 C168 158 88 158 60 143 Z" fill="#7a0000" opacity="0.55"/>
+  </g>
+
+  <!-- green shell prompt: caret + cursor -->
+  <g stroke="#7ed957" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M92 182 L112 198 L92 214"/>
+    <line x1="128" y1="214" x2="164" y2="214"/>
+  </g>
+</svg>
