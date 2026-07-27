@@ -31,8 +31,35 @@ $targets = Get-Process -ErrorAction SilentlyContinue | Where-Object {
 
 if (-not $targets) { Write-Host "reap: no postfix processes under $root"; return }
 
+# Resolve the owning account for a pid, so an un-killable leftover names its token.
+# An "Access is denied" on Kill almost always comes down to that: a daemon left by
+# an elevated or service context the current run can't terminate. Best-effort - the
+# owner query can itself be refused, in which case '?'.
+function Get-OwnerString([int]$id) {
+  try {
+    $cp = Get-CimInstance Win32_Process -Filter "ProcessId=$id" -ErrorAction Stop
+    if ($cp) {
+      $o = Invoke-CimMethod -InputObject $cp -MethodName GetOwner -ErrorAction Stop
+      if ($o -and $o.User) { return ('{0}\{1}' -f $o.Domain, $o.User) }
+    }
+  } catch {}
+  return '?'
+}
+
+# The pid here is the Windows (OS) pid - the WINPID column in Cygwin `ps -W`, not a
+# Cygwin pid. Log it with the image path and owner so a process is identifiable
+# from the log alone; a bare pid is recycled and useless after the fact.
+$failed = @()
 foreach ($p in $targets) {
-  try   { $p.Kill(); Write-Host ("reap: stopped {0} (pid {1})" -f $p.Name, $p.Id) }
-  catch { Write-Host ("reap: could not stop pid {0}: {1}" -f $p.Id, $_.Exception.Message) }
+  $desc = "{0} winpid {1} owner {2} path {3}" -f $p.Name, $p.Id, (Get-OwnerString $p.Id), $p.Path
+  try   { $p.Kill(); Write-Host "reap: stopped $desc" }
+  catch { Write-Host "reap: COULD NOT STOP $desc"; Write-Host ("       reason: {0}" -f $_.Exception.Message); $failed += $desc }
 }
 Start-Sleep -Milliseconds 500
+
+if ($failed.Count) {
+  Write-Host ""
+  Write-Host ("reap: WARNING - {0} leftover process(es) under {1} could not be stopped," -f $failed.Count, $root)
+  Write-Host  "      likely a different or elevated token. Identify with: bin\identify-proc.ps1 -Root $root"
+  foreach ($d in $failed) { Write-Host "        $d" }
+}

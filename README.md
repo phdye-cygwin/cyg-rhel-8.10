@@ -163,6 +163,7 @@ bin/install-logon-task.ps1    register the per-user logon task
 bin/install-mintty-shortcut.ps1  mintty terminal shortcut (base + Desktop)
 bin/run-logged.ps1            run a script, capturing all output (native + Cygwin) to a log
 bin/diag-mta.ps1              read-only probe for a stuck run (fds, process tree, logs)
+bin/identify-proc.ps1         resolve a Windows pid, or list a tree's processes (path + owner)
 bin/scrub-log.ps1             mask host/user/domain in a log before sharing
 packages/                     built .tar.xz for postfix and mailx
 cygport/                      port sources, patches, pristine tarballs
