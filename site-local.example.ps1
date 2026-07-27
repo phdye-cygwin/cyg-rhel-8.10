@@ -7,6 +7,14 @@
 # Every value is optional. Anything left unset falls back to a generic default,
 # so a fresh clone runs without editing this at all - it installs to
 # C:\cyg-rhel-8.10 and logs to %TEMP%\cyg-rhel-8.10. Uncomment only what you need.
+#
+# On the boolean flags below (CYG_RHEL_UNREDACTED, CYG_RHEL_NO_START,
+# CYG_RHEL_NO_DOWNLOAD, CYG_RHEL_NO_PAUSE): only 1/true/yes/on (any case) turn a
+# flag ON. Anything else - 0, false, no, off, empty, or unset - leaves it OFF.
+# This matters coming from either direction: in PowerShell `[bool]'0'` is $true,
+# and in a POSIX shell `[ -n "$X" ]` is true for "0" too, so the naive read of
+# both languages would treat CYG_RHEL_NO_PAUSE=0 as "pause off". It does not here.
+# To disable a flag, unset it or set it to 0.
 
 # ---- Install location -------------------------------------------------------
 
@@ -39,26 +47,29 @@ $env:CYG_RHEL_SETUP_DIR = 'C:\cyg-rhel-8.10\packages'
 # Default: %TEMP%\cyg-rhel-8.10
 $env:CYG_RHEL_LOGDIR = Join-Path $env:TEMP 'cyg-rhel-8.10'
 
-# ---- Logging: names -----------------------------------------------------------
+# ---- Logging: the timestamp ---------------------------------------------------
 
-# Log file names are built from a date stamp and a time stamp, joined with a dot:
-#   timestamp = <date>.<time>
-#   redacted  -> <timestamp>.redacted.log     (shareable; host/user/domain masked)
-#   unredacted-> <timestamp>.unredacted.log   (raw; git-ignored, kept only on request)
+# Log file names are fixed as <date>.<time>.redacted.log and
+# <date>.<time>.unredacted.log. Only the date and time stamps are configurable,
+# and they are .NET format strings (this is a native PowerShell tool; Get-Date
+# speaks .NET, not strftime). The system being built is POSIX, so the mapping:
 #
-# The stamps are .NET format strings (Get-Date -Format). Defaults match strftime
-# %Y-%m-%d and %H-%M-%S.
+#     .NET   strftime   meaning
+#     yyyy     %Y       4-digit year
+#     MM       %m       2-digit month
+#     dd       %d       2-digit day
+#     HH       %H       2-digit hour (24-hour)
+#     mm       %M       2-digit minute
+#     ss       %S       2-digit second
+#
+# Case swap to watch: .NET 'MM' is month and 'mm' is minute - the reverse feel
+# from strftime. Do NOT put strftime here: '%Y-%m-%d' does not error in .NET, it
+# silently yields a wrong name ('%m' resolves to minutes). Keep them .NET.
 # $env:CYG_RHEL_DATE_STAMP = 'yyyy-MM-dd'
 # $env:CYG_RHEL_TIME_STAMP = 'HH-mm-ss'
 
-# The log-name patterns. {stamp}, {date}, {time} expand. If you set a custom
-# unredacted pattern, its glob (placeholders -> *) is added to .gitignore before
-# the log is written, so a differently named raw log can never be committed.
-# $env:CYG_RHEL_REDACTED_NAME   = '{stamp}.redacted.log'
-# $env:CYG_RHEL_UNREDACTED_NAME = '{stamp}.unredacted.log'
-
 # Keep the raw, unredacted capture on every run (same as passing -Unredacted).
-# Off by default: only the redacted log is kept.
+# Off by default: only the redacted log (safe to attach to a bug report) is kept.
 # $env:CYG_RHEL_UNREDACTED = '1'
 
 # ---- Redaction ----------------------------------------------------------------
@@ -74,8 +85,7 @@ $env:CYG_RHEL_LOGDIR = Join-Path $env:TEMP 'cyg-rhel-8.10'
 # Configure the MTA but do not start it (same as -NoStart).
 # $env:CYG_RHEL_NO_START = '1'
 
-# Never download setup-x86_64.exe; fail if none is staged locally (same as
-# -NoDownload).
+# Never download setup-x86_64.exe; fail if none is staged locally (-NoDownload).
 # $env:CYG_RHEL_NO_DOWNLOAD = '1'
 
 # Do not pause at the end of the run. Leave unset for the Explorer double-click

@@ -11,12 +11,12 @@
   tees the raw output live to the console, then scrubs it into the redacted log.
 
   The redacted log (host, user, domain, profile path masked) is safe to share.
-  The full, unredacted capture is written only with -Unredacted (or the
-  CYG_RHEL_UNREDACTED env), to a sibling file whose name .gitignore excludes.
+  The full, unredacted capture is written only with -Unredacted (or
+  CYG_RHEL_UNREDACTED), to a sibling *.unredacted.log that .gitignore excludes.
 
 .PARAMETER Log
-  Explicit redacted-log path. Optional. When omitted the name is built from the
-  configured stamp and name patterns (see NOTES) under -LogDir.
+  Explicit redacted-log path. Optional. When omitted the name is
+  <date>.<time>.redacted.log under -LogDir.
 
 .PARAMETER File
   The .ps1 to run.
@@ -29,22 +29,10 @@
   Windows one).
 
 .PARAMETER LogDir
-  Directory for pattern-named logs. Default: CYG_RHEL_LOGDIR, else
-  %TEMP%\cyg-rhel-8.10.
+  Directory for the logs. Default: CYG_RHEL_LOGDIR, else %TEMP%\cyg-rhel-8.10.
 
 .PARAMETER Rest
   Remaining arguments, passed through to the script.
-
-.NOTES
-  Naming knobs (set in site-local.ps1 or the environment):
-    CYG_RHEL_DATE_STAMP       .NET date format  (default yyyy-MM-dd)
-    CYG_RHEL_TIME_STAMP       .NET time format  (default HH-mm-ss)
-    CYG_RHEL_REDACTED_NAME    name pattern      (default {stamp}.redacted.log)
-    CYG_RHEL_UNREDACTED_NAME  name pattern      (default {stamp}.unredacted.log)
-  {stamp} expands to <date>.<time>; {date} and {time} expand on their own. A
-  custom CYG_RHEL_UNREDACTED_NAME is added to the repo .gitignore before the log
-  is written, so a raw capture named outside the default *unredacted* rule can
-  never be committed by accident.
 #>
 [CmdletBinding(PositionalBinding=$false)]
 param(
@@ -57,48 +45,68 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-function Expand-Name([string]$pat, [hashtable]$vars) {
-  foreach ($k in $vars.Keys) { $pat = $pat -replace ('\{' + $k + '\}'), [string]$vars[$k] }
-  return $pat
+# Read a boolean-ish environment value the way a person would expect from EITHER
+# background. In PowerShell [bool]'0' and [bool]'false' are both $true (any
+# non-empty string is truthy), and in POSIX shells `[ -n "$X" ]` is likewise true
+# for "0" and "false" - both traps. So only 1/true/yes/on (any case) count as set;
+# 0/false/no/off/empty/unset count as clear. To turn a flag OFF, unset it or set
+# it to 0.
+function Test-EnvFlag {
+  param($v)
+  if ($null -eq $v) { return $false }
+  return @('1','true','yes','on') -contains ($v.ToString().Trim().ToLowerInvariant())
 }
 
 $explicitLog = -not [string]::IsNullOrEmpty($Log)
-$keepRaw     = $Unredacted -or $env:CYG_RHEL_UNREDACTED
+$keepRaw     = $Unredacted -or (Test-EnvFlag $env:CYG_RHEL_UNREDACTED)
 
-# Stamp and name patterns come from the environment (site-local.ps1 sets them).
+# Log names are <date>.<time>.redacted.log and <date>.<time>.unredacted.log. The
+# stamp is built with .NET format strings, because this is a native PowerShell
+# tool and Get-Date speaks .NET, not strftime. The system we are BUILDING is
+# POSIX, so for anyone reading from that side, here is the mapping:
+#
+#     .NET   strftime   meaning
+#     ----   --------   -------
+#     yyyy     %Y       4-digit year
+#     MM       %m       2-digit month
+#     dd       %d       2-digit day
+#     HH       %H       2-digit hour (24-hour)
+#     mm       %M       2-digit minute
+#     ss       %S       2-digit second
+#
+# Watch the case swap: .NET 'MM' is month and 'mm' is minute, which is the
+# reverse feel from strftime's %m (month) and %M (minute). That collision is why
+# these are .NET strings and not strftime: feeding '%Y-%m-%d' to .NET does NOT
+# error, it silently returns a wrong-but-plausible name ('%m' resolves to MINUTES
+# in .NET), and a silent wrong stamp is worse than a loud one. Keep them .NET.
 $dateFmt = if ($env:CYG_RHEL_DATE_STAMP) { $env:CYG_RHEL_DATE_STAMP } else { 'yyyy-MM-dd' }
 $timeFmt = if ($env:CYG_RHEL_TIME_STAMP) { $env:CYG_RHEL_TIME_STAMP } else { 'HH-mm-ss' }
-$now     = Get-Date
-$dateStr = $now.ToString($dateFmt)
-$timeStr = $now.ToString($timeFmt)
-$vars    = @{ stamp = "$dateStr.$timeStr"; date = $dateStr; time = $timeStr }
-
-$redPat   = if ($env:CYG_RHEL_REDACTED_NAME)   { $env:CYG_RHEL_REDACTED_NAME }   else { '{stamp}.redacted.log' }
-$unredPat = if ($env:CYG_RHEL_UNREDACTED_NAME) { $env:CYG_RHEL_UNREDACTED_NAME } else { '{stamp}.unredacted.log' }
+$now = Get-Date
+try {
+  $stamp = $now.ToString($dateFmt) + '.' + $now.ToString($timeFmt)
+} catch {
+  Write-Host "run-logged: bad CYG_RHEL_DATE_STAMP/TIME_STAMP ('$dateFmt'/'$timeFmt'); using defaults. These are .NET format strings, not strftime."
+  $stamp = $now.ToString('yyyy-MM-dd') + '.' + $now.ToString('HH-mm-ss')
+}
 
 if (-not $LogDir) {
   $LogDir = if ($env:CYG_RHEL_LOGDIR) { $env:CYG_RHEL_LOGDIR } else { Join-Path $env:TEMP 'cyg-rhel-8.10' }
 }
 
-# A custom unredacted name pattern must be gitignored before it is written. Turn
-# the pattern into a glob (placeholders -> *), then add it to the repo .gitignore
-# if it is not already listed. Idempotent.
-if ($env:CYG_RHEL_UNREDACTED_NAME) {
-  $glob = $env:CYG_RHEL_UNREDACTED_NAME
-  foreach ($k in @('stamp','date','time')) { $glob = $glob -replace ('\{' + $k + '\}'), '*' }
-  while ($glob -match '\*\*') { $glob = $glob -replace '\*\*', '*' }
-  $repo = Split-Path $PSScriptRoot -Parent
-  $gi   = Join-Path $repo '.gitignore'
-  if ((Test-Path $gi) -and ((Get-Content $gi) -notcontains $glob)) {
-    Add-Content -Path $gi -Value @('', '# Custom unredacted log pattern (added automatically by run-logged.ps1).', $glob)
-    Write-Host "run-logged: added '$glob' to .gitignore"
-  }
+# Resolve the two paths. An explicit -Log names the redacted file and the raw one
+# pairs beside it as <base>.unredacted<ext>; otherwise both come off one stamp.
+if ($explicitLog) {
+  $red    = $Log
+  $rdir   = Split-Path $red -Parent; if (-not $rdir) { $rdir = (Get-Location).Path }
+  $rawlog = [IO.Path]::Combine($rdir, [IO.Path]::GetFileNameWithoutExtension($red) + '.unredacted' + [IO.Path]::GetExtension($red))
+} else {
+  $red    = Join-Path $LogDir "$stamp.redacted.log"
+  $rawlog = Join-Path $LogDir "$stamp.unredacted.log"
 }
 
-if (-not $explicitLog) { $Log = Join-Path $LogDir (Expand-Name $redPat $vars) }
-
-# Make sure the log directory is writable; fall back to %TEMP% if not.
-$dir = Split-Path -Parent $Log
+# Make sure the target directory is writable; fall back to %TEMP%, keeping the
+# pair together, if not.
+$dir = Split-Path -Parent $red
 if (-not $dir) { $dir = (Get-Location).Path }
 $can = $false
 try {
@@ -109,8 +117,9 @@ try {
   $can = $true
 } catch {}
 if (-not $can) {
-  $Log = Join-Path $env:TEMP (Split-Path $Log -Leaf)
-  Write-Host "note: log directory is not writable; logging to $Log"
+  $red    = Join-Path $env:TEMP (Split-Path $red -Leaf)
+  $rawlog = Join-Path $env:TEMP (Split-Path $rawlog -Leaf)
+  Write-Host "note: log directory is not writable; logging to $env:TEMP"
 }
 
 if (-not (Test-Path $File)) { throw "run-logged: script not found: $File" }
@@ -118,22 +127,14 @@ if (-not (Test-Path $File)) { throw "run-logged: script not found: $File" }
 $argline = (@($Rest) | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
 $inner = ('powershell -NoProfile -ExecutionPolicy Bypass -File "{0}" {1} 2>&1' -f $File, $argline).Trim()
 
-# Raw capture, teed live to the console. When -Log was explicit, pair it as
-# <base>.unredacted<ext> (old behavior); otherwise use the unredacted pattern so
-# the redacted and raw logs share one stamp.
-$rdir = Split-Path $Log -Parent; if (-not $rdir) { $rdir = (Get-Location).Path }
-if ($explicitLog) {
-  $rawlog = [IO.Path]::Combine($rdir, [IO.Path]::GetFileNameWithoutExtension($Log) + '.unredacted' + [IO.Path]::GetExtension($Log))
-} else {
-  $rawlog = Join-Path $rdir (Expand-Name $unredPat $vars)
-}
-
+# Raw capture, teed live to the console.
 & $env:ComSpec /c $inner | Tee-Object -FilePath $rawlog
 $rc = $LASTEXITCODE
 
-& (Join-Path $PSScriptRoot 'scrub-log.ps1') -Path $rawlog -Out $Log -Also $RedactAlso | Out-Null
+# scrub-log reads the raw capture and writes the redacted, shareable copy.
+& (Join-Path $PSScriptRoot 'scrub-log.ps1') -Path $rawlog -Out $red -Also $RedactAlso | Out-Null
 Write-Host ""
-Write-Host "run-logged: redacted log at $Log"
+Write-Host "run-logged: redacted log at $red"
 if ($keepRaw) {
   Write-Host "run-logged: unredacted log at $rawlog (keep private; git ignores it)"
 } else {

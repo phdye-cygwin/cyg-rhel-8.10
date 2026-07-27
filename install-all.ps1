@@ -39,17 +39,28 @@ $Here = $PSScriptRoot
 $siteLocal = Join-Path $Here 'site-local.ps1'
 if (Test-Path $siteLocal) { . $siteLocal }
 
+# Read a boolean-ish environment value the way a person expects from EITHER
+# background. In PowerShell [bool]'0' and [bool]'false' are both $true (any
+# non-empty string is truthy); in POSIX shells `[ -n "$X" ]` is likewise true for
+# "0" and "false". Both are traps. So only 1/true/yes/on (any case) mean set;
+# 0/false/no/off/empty/unset mean clear. To turn a flag OFF, unset it or set 0.
+function Test-EnvFlag {
+  param($v)
+  if ($null -eq $v) { return $false }
+  return @('1','true','yes','on') -contains ($v.ToString().Trim().ToLowerInvariant())
+}
+
 # Switch knobs also honor site-local env, so a fully hands-off Explorer run can
 # set them without a command line.
-if (-not $NoStart    -and $env:CYG_RHEL_NO_START)    { $NoStart    = $true }
-if (-not $NoDownload -and $env:CYG_RHEL_NO_DOWNLOAD) { $NoDownload = $true }
-if (-not $NoPause    -and $env:CYG_RHEL_NO_PAUSE)    { $NoPause    = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_START)    { $NoStart    = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_DOWNLOAD) { $NoDownload = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_PAUSE)    { $NoPause    = $true }
 
 # Pause at the end so an Explorer double-click leaves the window open to read the
 # result. Skipped when captured (the outer run owns the pause), non-interactive,
 # or -NoPause / CYG_RHEL_NO_PAUSE.
 function Invoke-EndPause {
-  if ($NoPause -or $env:CYG_RHEL_NO_PAUSE -or $env:CYG_RHEL_CAPTURED) { return }
+  if ($NoPause -or $env:CYG_RHEL_CAPTURED) { return }
   if (-not [Environment]::UserInteractive) { return }
   try { Read-Host 'Install finished. Press Enter to close this window' | Out-Null } catch {}
 }
@@ -58,7 +69,7 @@ function Invoke-EndPause {
 # through run-logged so the whole run - native and Cygwin children included - is
 # logged, redacted by default. This is what lets "Run with PowerShell" from
 # Explorer do everything and still leave a shareable log. run-logged owns the log
-# name (built from the configured stamp / name patterns), so no -Log is passed.
+# name (built from the configured stamp), so no -Log is passed.
 if (-not $NoCapture -and -not $env:CYG_RHEL_CAPTURED) {
   $capAlso = @(); if ($env:CYG_RHEL_REDACT_ALSO) { $capAlso = $env:CYG_RHEL_REDACT_ALSO -split '\s*[,;]\s*' }
   # Forward the original parameters, minus -Log (run-logged owns the log),
@@ -79,8 +90,8 @@ if (-not $NoCapture -and -not $env:CYG_RHEL_CAPTURED) {
   $code = $LASTEXITCODE
   # This is the console-owning process (the one Explorer launched); pause here
   # regardless of the CYG_RHEL_CAPTURED flag it just set for the child.
-  if (-not $NoPause -and -not $env:CYG_RHEL_NO_PAUSE -and [Environment]::UserInteractive) {
-    Read-Host 'Install finished. Press Enter to close this window' | Out-Null
+  if (-not $NoPause -and [Environment]::UserInteractive) {
+    try { Read-Host 'Install finished. Press Enter to close this window' | Out-Null } catch {}
   }
   exit $code
 }

@@ -7,10 +7,7 @@ __pycache__/
 *local*
 !*local*.example.*
 
-# Run and capture logs are local; the redacted, shareable copies are not.
+# Logs belong in bug reports, not the repo - ignore them all. The *unredacted*
+# guard also catches a raw capture saved under some other extension.
 *.log
-!*.redacted.log
-
-# Unredacted (raw) captures carry host/user/domain: never committed, whatever
-# the extension.
 *unredacted*

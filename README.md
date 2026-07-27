@@ -36,15 +36,15 @@ and the tree's own bash included, which a PowerShell transcript drops) to a
 redacted log under `%TEMP%\cyg-rhel-8.10\` (or `CYG_RHEL_LOGDIR`), safe to attach
 to a bug report: your host, user, and domain are masked. The log is named
 `<date>.<time>.redacted.log` (default `2026-07-26.14-32-05.redacted.log`); the
-stamp and the name pattern are configurable in `site-local.ps1`. Add `-Unredacted`
-to also keep the raw capture beside it as `<date>.<time>.unredacted.log`, which
-git ignores. The capture is built in; there is nothing extra to invoke.
+date and time stamps are configurable in `site-local.ps1`. Add `-Unredacted` to
+also keep the raw capture beside it as `<date>.<time>.unredacted.log`, which git
+ignores. The capture is built in; there is nothing extra to invoke.
 
 From Windows Explorer, right-click `install-all.ps1` and choose "Run with
 PowerShell": with a `site-local.ps1` in place it needs no arguments and does the
 whole install, then pauses on the finished window so you can read the result.
-`site-local.example.ps1` lists every knob - paths, log directory, stamp and
-name patterns, extra redactions, and whether to pause - with an example for each.
+`site-local.example.ps1` lists every knob - paths, log directory, timestamp,
+extra redactions, and whether to pause - with an example for each.
 
 `bin\run-logged.ps1` is the capture mechanism and works for any script (such as
 `diag-mta.ps1`); `bin\scrub-log.ps1` redacts a log you already have. From a Cygwin
