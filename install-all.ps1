@@ -25,10 +25,42 @@ param(
   [switch]$NoStart,
   [switch]$Shortcut,
   [switch]$LogonTask,
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$NoCapture,
+  [switch]$Unredacted
 )
 $ErrorActionPreference = 'Stop'
 $Here = $PSScriptRoot
+
+# Load per-site settings if present (CYG_RHEL_ROOT / CYG_RHEL_SETUP_DIR and the
+# log / redaction knobs), so running this from Explorer with no arguments still
+# knows where the install goes.
+$siteLocal = Join-Path $Here 'site-local.ps1'
+if (Test-Path $siteLocal) { . $siteLocal }
+
+# Self-capture. Unless -NoCapture, or already inside a capture, re-run this script
+# through run-logged so the whole run - native and Cygwin children included - is
+# logged, redacted by default. This is what lets "Run with PowerShell" from
+# Explorer do everything and still leave a shareable log.
+if (-not $NoCapture -and -not $env:CYG_RHEL_CAPTURED) {
+  $env:CYG_RHEL_CAPTURED = '1'
+  $capDir = if ($env:CYG_RHEL_LOGDIR) { $env:CYG_RHEL_LOGDIR } else { Join-Path $env:TEMP 'cyg-rhel-8.10' }
+  $capLog = Join-Path $capDir ('rhel-install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
+  $capAlso = @(); if ($env:CYG_RHEL_REDACT_ALSO) { $capAlso = $env:CYG_RHEL_REDACT_ALSO -split '\s*[,;]\s*' }
+  # Forward the original parameters, minus -Log (run-logged owns the log) and
+  # -NoCapture (would defeat the re-run).
+  $fwd = @()
+  foreach ($kv in $PSBoundParameters.GetEnumerator()) {
+    if ($kv.Key -in 'Log','NoCapture','Unredacted') { continue }
+    if ($kv.Value -is [System.Management.Automation.SwitchParameter]) {
+      if ($kv.Value.IsPresent) { $fwd += "-$($kv.Key)" }
+    } else { $fwd += "-$($kv.Key)"; $fwd += [string]$kv.Value }
+  }
+  $rlParams = @{ Log = $capLog; RedactAlso = $capAlso; File = (Join-Path $Here 'install-all.ps1') }
+  if ($Unredacted) { $rlParams['Unredacted'] = $true }
+  & (Join-Path $Here 'bin\run-logged.ps1') @rlParams -NoCapture @fwd
+  exit $LASTEXITCODE
+}
 
 # -Log is the PowerShell analog of Cygwin's `script`: transcribe everything to a
 # file. A transcript can miss a native child's own console output, so on the way

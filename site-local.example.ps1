@@ -21,3 +21,9 @@ $env:CYG_RHEL_SETUP_DIR = 'C:\cyg-rhel-8.10\packages'
 # user often cannot write). The run commands in the README build their -Log path
 # from this. A per-user temp folder is always writable.
 $env:CYG_RHEL_LOGDIR = Join-Path $env:TEMP 'cyg-rhel-8.10'
+
+# Extra strings to mask in the shared (redacted) log, on top of the Windows host,
+# user, domain, and profile path that are masked automatically. Use it for a
+# Cygwin username that differs from your Windows one, or a specific hostname.
+# Comma- or semicolon-separated. Leave unset if the automatic masking is enough.
+# $env:CYG_RHEL_REDACT_ALSO = 'mycyguser,myhostname'

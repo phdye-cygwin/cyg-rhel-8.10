@@ -10,3 +10,7 @@ __pycache__/
 # Run and capture logs are local; the redacted, shareable copies are not.
 *.log
 !*.redacted.log
+
+# Unredacted (raw) captures carry host/user/domain: never committed, whatever
+# the extension.
+*unredacted*

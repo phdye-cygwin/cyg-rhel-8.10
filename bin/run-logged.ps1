@@ -1,33 +1,41 @@
 <#
 .SYNOPSIS
   Run a PowerShell script with COMPLETE output capture - its own streams and
-  every child's, native and Cygwin - to the console and a log file at once.
+  every child's, native and Cygwin - and write a redacted log by default.
 
 .DESCRIPTION
   Start-Transcript captures only PowerShell's own streams, so a native child
   (setup-x86_64.exe, the tree's bash) that writes straight to the console is
   missed; that is why a transcript logs less than Cygwin `script`. This runs the
-  target as a child process whose stdout and stderr are merged by cmd at the byte
-  level (clean, no PowerShell error-record wrapping) and teed. The child and
-  every process IT starts inherit that stdout, so their output is captured too.
+  target as a child process whose stdout and stderr cmd merges at the byte level,
+  tees the raw output live to the console, then scrubs it into the log at -Log.
+
+  The -Log file is REDACTED (host, user, domain, profile path masked) so it is
+  safe to share. The full, unredacted capture is written only with -Unredacted,
+  to a sibling file with "unredacted" in its name (which .gitignore excludes).
 
 .PARAMETER Log
-  Log file. If its directory is not writable, falls back to %TEMP%.
+  The redacted log to write. If its directory is not writable, falls back to
+  %TEMP%.
 
 .PARAMETER File
   The .ps1 to run.
 
+.PARAMETER Unredacted
+  Also keep the raw capture, at <name>.unredacted<ext> beside -Log.
+
+.PARAMETER RedactAlso
+  Extra literal strings to mask (e.g. a Cygwin username that differs from the
+  Windows one).
+
 .PARAMETER Rest
   Remaining arguments, passed through to the script.
-
-.EXAMPLE
-  run-logged.ps1 -Log C:\tmp\rhel-install.log -File .\install-all.ps1 -Root C:\cyg-rhel-8.10\cygwin64
 #>
 [CmdletBinding()]
 param(
   [Parameter(Mandatory=$true)][string]$Log,
   [Parameter(Mandatory=$true)][string]$File,
-  [switch]$Redact,
+  [switch]$Unredacted,
   [string[]]$RedactAlso = @(),
   [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
 )
@@ -52,16 +60,21 @@ if (-not (Test-Path $File)) { throw "run-logged: script not found: $File" }
 $argline = (@($Rest) | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
 $inner = ('powershell -NoProfile -ExecutionPolicy Bypass -File "{0}" {1} 2>&1' -f $File, $argline).Trim()
 
-& $env:ComSpec /c $inner | Tee-Object -FilePath $Log
+# Raw capture goes to the .unredacted sibling and is teed live to the console;
+# the default -Log is the redacted copy, produced from it after the run.
+$rdir = Split-Path $Log -Parent; if (-not $rdir) { $rdir = (Get-Location).Path }
+$rawlog = [IO.Path]::Combine($rdir, [IO.Path]::GetFileNameWithoutExtension($Log) + '.unredacted' + [IO.Path]::GetExtension($Log))
+
+& $env:ComSpec /c $inner | Tee-Object -FilePath $rawlog
 $rc = $LASTEXITCODE
 
-if ($Redact) {
-  $rdir = Split-Path $Log -Parent; if (-not $rdir) { $rdir = '.' }
-  $red = [IO.Path]::Combine($rdir, [IO.Path]::GetFileNameWithoutExtension($Log) + '.redacted' + [IO.Path]::GetExtension($Log))
-  & (Join-Path $PSScriptRoot 'scrub-log.ps1') -Path $Log -Out $red -Also $RedactAlso
-  Write-Host "run-logged: redacted copy for sharing -> $red"
-}
-
+& (Join-Path $PSScriptRoot 'scrub-log.ps1') -Path $rawlog -Out $Log -Also $RedactAlso | Out-Null
 Write-Host ""
-Write-Host ("run-logged: {0} exited {1}; full log at {2}" -f (Split-Path $File -Leaf), $rc, $Log)
+Write-Host "run-logged: redacted log at $Log"
+if ($Unredacted) {
+  Write-Host "run-logged: unredacted log at $rawlog (keep private; git ignores it)"
+} else {
+  Remove-Item $rawlog -Force -ErrorAction SilentlyContinue
+}
+Write-Host ("run-logged: {0} exited {1}" -f (Split-Path $File -Leaf), $rc)
 exit $rc

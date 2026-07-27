@@ -31,16 +31,19 @@ crosses through `cmd.exe`. Both sidestep the deadlock you would hit launching a
 replica binary straight from another Cygwin shell, where two `cygwin1.dll`
 instances collide.
 
-To capture a full log, including the output of setup and the tree's own bash
-(which a PowerShell transcript silently drops), run through `bin/run-logged.ps1`:
+`install-all.ps1` logs itself. Every run is captured in full (the output of setup
+and the tree's own bash included, which a PowerShell transcript drops) to a
+redacted log under `%TEMP%\cyg-rhel-8.10\` (or `CYG_RHEL_LOGDIR`), safe to attach
+to a bug report: your host, user, and domain are masked. Add `-Unredacted` to
+also keep the raw log beside it (named `.unredacted`, which git ignores). The
+capture is built in; there is nothing extra to invoke.
 
-```powershell
-powershell -File bin\run-logged.ps1 -Redact -Log $env:TEMP\rhel-install.log -File .\install-all.ps1
-```
+From Windows Explorer, right-click `install-all.ps1` and choose "Run with
+PowerShell": with a `site-local.ps1` in place it needs no arguments and does the
+whole install, leaving a logged, redacted result.
 
-It tees the whole run to the console and the log at once. `-Redact` also writes a
-`.redacted` copy with your host, user, and domain masked, for attaching to a bug
-report; `bin\scrub-log.ps1` does the same to a log you already have. From a Cygwin
+`bin\run-logged.ps1` is the capture mechanism and works for any script (such as
+`diag-mta.ps1`); `bin\scrub-log.ps1` redacts a log you already have. From a Cygwin
 shell you can still wrap `./install-all.sh` with `script`.
 
 Prefer to run the phases yourself? The same steps by hand:
