@@ -1,5 +1,9 @@
 # RHEL 8.10 Cygwin replica, no-admin build
 
+<p align="center">
+  <img src="share/rhel-cygwin.png" width="120" alt="RHEL 8.10 Cygwin replica: a red fedora in a Cygwin-green terminal frame">
+</p>
+
 Build a RHEL 8.10 Cygwin replica on a Windows machine where you do not have local
 administrator rights. Everything comes up under your own account: the install,
 the Postfix 3.5.8 MTA, and the Heirloom mailx client. The one capability it needs
