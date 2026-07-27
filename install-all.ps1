@@ -23,7 +23,7 @@ param(
   [string]$Log       = '',
   [switch]$NoDownload,
   [switch]$NoStart,
-  [switch]$Shortcut,
+  [switch]$NoShortcut,
   [switch]$LogonTask,
   [switch]$DryRun,
   [switch]$NoCapture,
@@ -52,9 +52,11 @@ function Test-EnvFlag {
 
 # Switch knobs also honor site-local env, so a fully hands-off Explorer run can
 # set them without a command line.
-if (Test-EnvFlag $env:CYG_RHEL_NO_START)    { $NoStart    = $true }
-if (Test-EnvFlag $env:CYG_RHEL_NO_DOWNLOAD) { $NoDownload = $true }
-if (Test-EnvFlag $env:CYG_RHEL_NO_PAUSE)    { $NoPause    = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_START)    { $NoStart     = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_DOWNLOAD) { $NoDownload  = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_PAUSE)    { $NoPause     = $true }
+if (Test-EnvFlag $env:CYG_RHEL_NO_SHORTCUT) { $NoShortcut  = $true }
+if (Test-EnvFlag $env:CYG_RHEL_LOGON_TASK)  { $LogonTask   = $true }
 
 # Pause at the end so an Explorer double-click leaves the window open to read the
 # result. Skipped when captured (the outer run owns the pause), non-interactive,
@@ -152,7 +154,7 @@ if (-not $Base) {
 if (-not $Root)   { $Root = [IO.Path]::Combine($Base, 'cygwin64') }
 if (-not $PkgDir) { $PkgDir = [IO.Path]::Combine($Base, 'packages') }
 if (-not $Packages) {
-  $Packages = 'bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,libpq5,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
+  $Packages = 'bash,coreutils,sed,gawk,grep,findutils,diffutils,patch,tar,gzip,bzip2,xz,which,less,procps-ng,util-linux,ncurses,zlib,rpm,gcc-core,gcc-g++,make,autoconf,automake,libtool,flex,bison,binutils,gdb,pkg-config,perl,python36,python3,openssh,openssl,curl,wget,rsync,git,vim,nano,mintty,tcsh,cygrunsrv,csih,cron,cygport,cpio,alternatives,editrights,getent,file,m4,texinfo,patchutils,libdb-devel,libpcre-devel,libpcre2-devel,libssl-devel,libsasl2-devel,libsqlite3-devel,libmysqlclient-devel,libpq-devel,libpq5,openldap-devel,libintl-devel,gettext-devel,zlib-devel,libiconv-devel'
 }
 
 $NewBash = [IO.Path]::Combine($Root, 'bin\bash.exe')
@@ -249,7 +251,7 @@ if ($DryRun) {
   Write-Host "  bin/postfix-user-setup.sh"
   Write-Host "  bin/postfix-user-launch.sh stop"
   if (-not $NoStart) { Write-Host "== phase 3: start the MTA (detached) =="; Write-Host "  bin/start-tree-postfix.ps1 -Root $Root" }
-  if ($Shortcut)  { Write-Host "then: install-mintty-shortcut.ps1 -Base $Base" }
+  if (-not $NoShortcut) { Write-Host "then: install-mintty-shortcut.ps1 -Root $Root -Base $Base (mintty shortcut + project icon)" }
   if ($LogonTask) { Write-Host "then: install-logon-task.ps1" }
   Stop-Log
   Invoke-EndPause
@@ -374,7 +376,18 @@ echo "install-all: config phase done"
     & (Join-Path $Here 'bin\start-tree-postfix.ps1') -Root $Root
   }
 
-  if ($Shortcut)  { & (Join-Path $Here 'bin\install-mintty-shortcut.ps1') -Base $Base }
+  if (-not $NoShortcut) {
+    # Stage the project icon to a stable path in the tree (survives a rebuild),
+    # then make the shortcut, which picks it up. If the repo has no icon yet, the
+    # helper falls back to mintty's own icon - the shortcut still gets created.
+    $icoSrc = Join-Path $Here 'share\rhel-cygwin.ico'
+    if (Test-Path $icoSrc) {
+      $icoDst = [IO.Path]::Combine($Root, 'usr\share\rhel-cygwin.ico')
+      New-Item -ItemType Directory -Force -Path (Split-Path $icoDst) | Out-Null
+      Copy-Item -Force $icoSrc $icoDst
+    }
+    & (Join-Path $Here 'bin\install-mintty-shortcut.ps1') -Root $Root -Base $Base
+  }
   if ($LogonTask) { & (Join-Path $Here 'bin\install-logon-task.ps1') }
 
   Write-Host "install-all: done. Replica at $Root"

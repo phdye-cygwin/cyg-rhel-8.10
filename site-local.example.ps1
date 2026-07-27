@@ -97,3 +97,11 @@ $env:CYG_RHEL_LOGDIR = Join-Path $env:TEMP 'cyg-rhel-8.10'
 # case, where the pause keeps the window open to read the result; set it for
 # unattended/scripted runs (same as -NoPause).
 # $env:CYG_RHEL_NO_PAUSE = '1'
+
+# A mintty terminal shortcut (base folder + Desktop), carrying the project icon,
+# is created by default. Set this to skip it (same as -NoShortcut).
+# $env:CYG_RHEL_NO_SHORTCUT = '1'
+
+# Register a per-user logon task so the MTA starts at each sign-in. Off by
+# default; no admin needed (same as -LogonTask).
+# $env:CYG_RHEL_LOGON_TASK = '1'

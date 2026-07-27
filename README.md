@@ -132,9 +132,14 @@ Bring it up. `bin/postfix-user-launch.sh start` starts master now.
 sign in, no admin. `schtasks /Run /TN rhel810-postfix` starts it without logging
 out.
 
-Optional, a terminal shortcut. `bin/install-mintty-shortcut.ps1` drops a mintty
-login-shell shortcut in the base directory and on your Desktop; pass `-NoDesktop`
-to skip the Desktop copy. No admin.
+A terminal shortcut. `install-all.ps1` creates one by default: a mintty
+login-shell shortcut in the base directory and on your Desktop, carrying the
+project icon (a red fedora in a Cygwin-green terminal frame) so the replica reads
+as distinct from live Cygwin. Skip it with `-NoShortcut` or
+`CYG_RHEL_NO_SHORTCUT`. To make it by hand, `bin/install-mintty-shortcut.ps1`
+takes `-Root`/`-Base`, an optional `-Icon`, and `-NoDesktop`; no admin. The icon
+lives in the repo at `share/rhel-cygwin.ico` and is staged to
+`<root>\usr\share\rhel-cygwin.ico` at install time (it survives a rebuild there).
 
 ## Verify
 
