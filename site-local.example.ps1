@@ -72,6 +72,11 @@ $env:CYG_RHEL_LOGDIR = Join-Path $env:TEMP 'cyg-rhel-8.10'
 # Off by default: only the redacted log (safe to attach to a bug report) is kept.
 # $env:CYG_RHEL_UNREDACTED = '1'
 
+# Every captured line is prefixed with a wall-clock timestamp in the log file (not
+# on the console), so a stalled run shows exactly where it stopped. On by default.
+# Set this to turn stamping off.
+# $env:CYG_RHEL_NO_TIMESTAMP = '1'
+
 # ---- Redaction ----------------------------------------------------------------
 
 # Extra strings to mask in the shared (redacted) log, on top of the Windows host,

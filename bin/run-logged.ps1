@@ -31,6 +31,10 @@
 .PARAMETER LogDir
   Directory for the logs. Default: CYG_RHEL_LOGDIR, else %TEMP%\cyg-rhel-8.10.
 
+.PARAMETER NoTimestamp
+  Do not prefix each captured line with a wall-clock timestamp in the log.
+  CYG_RHEL_NO_TIMESTAMP=1 does the same. Stamping is on by default.
+
 .PARAMETER Rest
   Remaining arguments, passed through to the script.
 #>
@@ -41,6 +45,7 @@ param(
   [switch]$Unredacted,
   [string[]]$RedactAlso = @(),
   [string]$LogDir = '',
+  [switch]$NoTimestamp,
   [Parameter(ValueFromRemainingArguments=$true)][string[]]$Rest
 )
 $ErrorActionPreference = 'Stop'
@@ -127,9 +132,26 @@ if (-not (Test-Path $File)) { throw "run-logged: script not found: $File" }
 $argline = (@($Rest) | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
 $inner = ('powershell -NoProfile -ExecutionPolicy Bypass -File "{0}" {1} 2>&1' -f $File, $argline).Trim()
 
-# Raw capture, teed live to the console.
-& $env:ComSpec /c $inner | Tee-Object -FilePath $rawlog
-$rc = $LASTEXITCODE
+# Raw capture. Each captured line gets a wall-clock timestamp in the FILE (the
+# console stays clean and readable), so a stalled run shows exactly where and when
+# it stopped - the reason this tool exists. AutoFlush keeps the log complete up to
+# the last line even if the run hangs or is killed mid-stream. Turn stamping off
+# with -NoTimestamp or CYG_RHEL_NO_TIMESTAMP, which falls back to a plain tee.
+$stampLines = -not ($NoTimestamp -or (Test-EnvFlag $env:CYG_RHEL_NO_TIMESTAMP))
+if ($stampLines) {
+  $sw = [System.IO.StreamWriter]::new($rawlog, $false)
+  $sw.AutoFlush = $true
+  try {
+    & $env:ComSpec /c $inner | ForEach-Object {
+      $sw.WriteLine(((Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff') + '  ' + $_))
+      Write-Host $_
+    }
+    $rc = $LASTEXITCODE
+  } finally { $sw.Dispose() }
+} else {
+  & $env:ComSpec /c $inner | Tee-Object -FilePath $rawlog
+  $rc = $LASTEXITCODE
+}
 
 # scrub-log reads the raw capture and writes the redacted, shareable copy.
 & (Join-Path $PSScriptRoot 'scrub-log.ps1') -Path $rawlog -Out $red -Also $RedactAlso | Out-Null

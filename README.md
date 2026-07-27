@@ -38,7 +38,9 @@ to a bug report: your host, user, and domain are masked. The log is named
 `<date>.<time>.redacted.log` (default `2026-07-26.14-32-05.redacted.log`); the
 date and time stamps are configurable in `site-local.ps1`. Add `-Unredacted` to
 also keep the raw capture beside it as `<date>.<time>.unredacted.log`, which git
-ignores. The capture is built in; there is nothing extra to invoke.
+ignores. Every line in the log carries a wall-clock timestamp, so a stalled run
+shows exactly where it stopped (turn that off with `CYG_RHEL_NO_TIMESTAMP`). The
+capture is built in; there is nothing extra to invoke.
 
 From Windows Explorer, right-click `install-all.ps1` and choose "Run with
 PowerShell": with a `site-local.ps1` in place it needs no arguments and does the
