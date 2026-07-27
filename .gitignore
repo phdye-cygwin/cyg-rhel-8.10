@@ -1,2 +1,12 @@
 __pycache__/
 *.pyc
+
+# Per-site / local config: anything with "local" in the name stays out of the
+# repo. Committed example templates are the exception (they show what the local
+# file should contain).
+*local*
+!*local*.example.*
+
+# Run and capture logs are local; the redacted, shareable copies are not.
+*.log
+!*.redacted.log
