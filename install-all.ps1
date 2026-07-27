@@ -27,7 +27,8 @@ param(
   [switch]$LogonTask,
   [switch]$DryRun,
   [switch]$NoCapture,
-  [switch]$Unredacted
+  [switch]$Unredacted,
+  [switch]$NoPause
 )
 $ErrorActionPreference = 'Stop'
 $Here = $PSScriptRoot
@@ -38,28 +39,50 @@ $Here = $PSScriptRoot
 $siteLocal = Join-Path $Here 'site-local.ps1'
 if (Test-Path $siteLocal) { . $siteLocal }
 
+# Switch knobs also honor site-local env, so a fully hands-off Explorer run can
+# set them without a command line.
+if (-not $NoStart    -and $env:CYG_RHEL_NO_START)    { $NoStart    = $true }
+if (-not $NoDownload -and $env:CYG_RHEL_NO_DOWNLOAD) { $NoDownload = $true }
+if (-not $NoPause    -and $env:CYG_RHEL_NO_PAUSE)    { $NoPause    = $true }
+
+# Pause at the end so an Explorer double-click leaves the window open to read the
+# result. Skipped when captured (the outer run owns the pause), non-interactive,
+# or -NoPause / CYG_RHEL_NO_PAUSE.
+function Invoke-EndPause {
+  if ($NoPause -or $env:CYG_RHEL_NO_PAUSE -or $env:CYG_RHEL_CAPTURED) { return }
+  if (-not [Environment]::UserInteractive) { return }
+  try { Read-Host 'Install finished. Press Enter to close this window' | Out-Null } catch {}
+}
+
 # Self-capture. Unless -NoCapture, or already inside a capture, re-run this script
 # through run-logged so the whole run - native and Cygwin children included - is
 # logged, redacted by default. This is what lets "Run with PowerShell" from
-# Explorer do everything and still leave a shareable log.
+# Explorer do everything and still leave a shareable log. run-logged owns the log
+# name (built from the configured stamp / name patterns), so no -Log is passed.
 if (-not $NoCapture -and -not $env:CYG_RHEL_CAPTURED) {
-  $env:CYG_RHEL_CAPTURED = '1'
-  $capDir = if ($env:CYG_RHEL_LOGDIR) { $env:CYG_RHEL_LOGDIR } else { Join-Path $env:TEMP 'cyg-rhel-8.10' }
-  $capLog = Join-Path $capDir ('rhel-install-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')
   $capAlso = @(); if ($env:CYG_RHEL_REDACT_ALSO) { $capAlso = $env:CYG_RHEL_REDACT_ALSO -split '\s*[,;]\s*' }
-  # Forward the original parameters, minus -Log (run-logged owns the log) and
-  # -NoCapture (would defeat the re-run).
+  # Forward the original parameters, minus -Log (run-logged owns the log),
+  # -NoCapture (would defeat the re-run), and the pause/redaction knobs the outer
+  # run handles here.
   $fwd = @()
   foreach ($kv in $PSBoundParameters.GetEnumerator()) {
-    if ($kv.Key -in 'Log','NoCapture','Unredacted') { continue }
+    if ($kv.Key -in 'Log','NoCapture','Unredacted','NoPause') { continue }
     if ($kv.Value -is [System.Management.Automation.SwitchParameter]) {
       if ($kv.Value.IsPresent) { $fwd += "-$($kv.Key)" }
     } else { $fwd += "-$($kv.Key)"; $fwd += [string]$kv.Value }
   }
-  $rlParams = @{ Log = $capLog; RedactAlso = $capAlso; File = (Join-Path $Here 'install-all.ps1') }
+  if ($NoPause) { $fwd += '-NoPause' }
+  $rlParams = @{ RedactAlso = $capAlso; File = (Join-Path $Here 'install-all.ps1') }
   if ($Unredacted) { $rlParams['Unredacted'] = $true }
+  $env:CYG_RHEL_CAPTURED = '1'
   & (Join-Path $Here 'bin\run-logged.ps1') @rlParams -NoCapture @fwd
-  exit $LASTEXITCODE
+  $code = $LASTEXITCODE
+  # This is the console-owning process (the one Explorer launched); pause here
+  # regardless of the CYG_RHEL_CAPTURED flag it just set for the child.
+  if (-not $NoPause -and -not $env:CYG_RHEL_NO_PAUSE -and [Environment]::UserInteractive) {
+    Read-Host 'Install finished. Press Enter to close this window' | Out-Null
+  }
+  exit $code
 }
 
 # -Log is the PowerShell analog of Cygwin's `script`: transcribe everything to a
@@ -109,6 +132,9 @@ if ($Log) {
 # for the whole tool family without a path living in the repo.
 if (-not $Root   -and $env:CYG_RHEL_ROOT)       { $Root   = $env:CYG_RHEL_ROOT }
 if (-not $PkgDir -and $env:CYG_RHEL_SETUP_DIR)  { $PkgDir = $env:CYG_RHEL_SETUP_DIR }
+if (-not $Base   -and $env:CYG_RHEL_BASE)       { $Base   = $env:CYG_RHEL_BASE }
+if (-not $PSBoundParameters.ContainsKey('Snapshot') -and $env:CYG_RHEL_SNAPSHOT) { $Snapshot = $env:CYG_RHEL_SNAPSHOT }
+if (-not $Packages -and $env:CYG_RHEL_PACKAGES) { $Packages = $env:CYG_RHEL_PACKAGES }
 if (-not $Base) {
   if ($Root) { $Base = [IO.Path]::GetDirectoryName($Root) } else { $Base = 'C:\cyg-rhel-8.10' }
 }
@@ -176,6 +202,7 @@ trap {
   Write-Host "install-all: FAILED -- $($_.Exception.Message)"
   Write-Diag
   Stop-Log
+  Invoke-EndPause
   exit 1
 }
 
@@ -214,6 +241,7 @@ if ($DryRun) {
   if ($Shortcut)  { Write-Host "then: install-mintty-shortcut.ps1 -Base $Base" }
   if ($LogonTask) { Write-Host "then: install-logon-task.ps1" }
   Stop-Log
+  Invoke-EndPause
   exit 0
 }
 
@@ -347,3 +375,4 @@ if ($Log) {
   if (Test-There $sl)     { Write-Host "-- setup.log.full (tail) --"; Get-Content $sl -Tail 40 -ErrorAction SilentlyContinue }
 }
 Stop-Log
+Invoke-EndPause
