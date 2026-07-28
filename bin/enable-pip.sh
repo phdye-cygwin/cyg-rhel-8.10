@@ -7,7 +7,7 @@ set -eu
 export PATH=/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
 
 PROG=${0##*/}
-VERSION='enable-pip 1.1'
+VERSION='enable-pip 1.2'
 
 usage() {
 	cat <<EOF
@@ -62,12 +62,21 @@ ANCHOR_DIR=/etc/pki/ca-trust/source/anchors
 [ -d "$ANCHOR_DIR" ] \
 	|| die "trust anchor directory missing: $ANCHOR_DIR"
 
-# Find powershell.exe; check the usual locations.
+# Find powershell.exe. The script's PATH is Cygwin-only, so powershell.exe
+# won't be found by a bare `command -v`. Resolve the Windows system directory
+# via cygpath (handles any cygdrive prefix and drive letter), then fall back
+# to a PATH search in case someone has added the Windows dirs.
 PS_EXE=
-for p in /cygdrive/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe \
-         /cygdrive/c/Windows/SysWOW64/WindowsPowerShell/v1.0/powershell.exe; do
+WINSYS=$(cygpath -u "${SYSTEMROOT:-C:\\Windows}")/System32
+for p in "$WINSYS/WindowsPowerShell/v1.0/powershell.exe" \
+         "$WINSYS/../SysWOW64/WindowsPowerShell/v1.0/powershell.exe"; do
 	if [ -x "$p" ]; then PS_EXE=$p; break; fi
 done
+if [ -z "$PS_EXE" ]; then
+	# Last resort: maybe it is on PATH already (login shell, custom PATH).
+	PS_EXE=$(PATH="$PATH:$WINSYS/WindowsPowerShell/v1.0" command -v powershell.exe 2>/dev/null) \
+		|| true
+fi
 [ -n "$PS_EXE" ] || die "powershell.exe not found"
 
 # -- import Windows root CAs --------------------------------------------------
