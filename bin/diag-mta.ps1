@@ -71,7 +71,12 @@ $lines = New-Object System.Collections.Generic.List[string]
 function Emit($s) { $lines.Add([string]$s) }
 function Section($t) { Emit ''; Emit ('==== ' + $t + ' ====') }
 
+# Unset HOME so the replica's bash resolves it from its own /etc/passwd rather
+# than inheriting the caller's Cygwin home (whose profile may not exist in the
+# replica). Restored at the end.
 $bash = Join-Path $Root 'bin\bash.exe'
+$savedHome = $env:HOME
+try { Remove-Item Env:HOME -ErrorAction SilentlyContinue } catch {}
 
 Section 'host / date'
 Emit ("date : {0}" -f (Get-Date -Format o))
@@ -108,6 +113,8 @@ if (Test-Path $bash) {
 }
 
 Section 'done'
+
+if ($savedHome) { $env:HOME = $savedHome }
 
 $report = ($lines -join "`r`n")
 Write-Output $report
