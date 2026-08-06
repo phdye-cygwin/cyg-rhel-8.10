@@ -36,7 +36,8 @@ import sys
 __version__ = '1.0.0'
 __all__ = ['CygrootError', 'known_roots', 'this_root_windows',
            'this_root_name', 'resolve', 'read_default', 'write_default',
-           'clear_default', 'config_path', 'roots_dir', 'install_to', 'main']
+           'clear_default', 'config_path', 'roots_dir', 'install_to',
+           'home_of', 'interpreter_of', 'main']
 
 OK, WARN, GAP = 0, 1, 2
 
@@ -218,6 +219,56 @@ def clear_default(path=None):
     return p
 
 
+def home_of(posix_root, user=None):
+    """That instance's home for a user. Not necessarily one that exists: the
+    caller decides whether absence is a problem.
+
+    Each instance keeps its own /home, and under desktop-commander HOME is the
+    Windows profile instead, which is how ~/.pbi and the git identity in
+    /home/phili/.gitconfig get missed. This is the path that was meant.
+    """
+    u = (user or os.environ.get('USER') or os.environ.get('USERNAME')
+         or os.environ.get('LOGNAME') or '')
+    if not u:
+        raise CygrootError(
+            'cannot tell which user to look for.',
+            'USER, USERNAME and LOGNAME are all unset.',
+            'cygroot --home <instance> --user <you>')
+    return os.path.join(posix_root, 'home', u)
+
+
+def interpreter_of(posix_root):
+    """That instance's python3, as the real executable.
+
+    bin/python3 is a symlink -- to /etc/alternatives/python3 in one instance
+    and straight to python3.6m.exe in another -- and a symlink is not
+    something a Windows-side caller or a neighbouring instance can run. The
+    versioned .exe is, and its name says which interpreter you are getting,
+    which is the question that keeps coming up: 3.2m, 3.6m and 3.9 here.
+    """
+    d = os.path.join(posix_root, 'bin')
+    cands = []
+    if os.path.isdir(d):
+        cands = [n for n in os.listdir(d)
+                 if n.startswith('python3') and n.endswith('.exe')]
+
+    def version_key(n):
+        core = n[len('python3'):-len('.exe')].rstrip('m').strip('.')
+        return [int(p) if p.isdigit() else 0 for p in core.split('.')] or [0]
+
+    if cands:
+        cands.sort(key=version_key)
+        return os.path.join(d, cands[-1])
+    for n in ('python3.exe', 'python3'):
+        p = os.path.join(d, n)
+        if os.path.exists(p):
+            return p
+    raise CygrootError(
+        'no python3 in %s' % d,
+        'That instance has no interpreter to name.',
+        'cygroot --list')
+
+
 def install_to(posix_root, source=None):
     """Copy this module into an instance's /usr/local/bin.
 
@@ -288,11 +339,18 @@ Reporting. None of these read the default except --default:
   --status                the report
   --which                 name of the instance this shell is in
   -l, --list              known names, one per line
-  -b, --bash [<name>]     that instance's bash.exe
   --default               the default name, and nothing else
+  --exists [<name>]       say nothing; exit 0 if it is an instance, 1 if not
+
+Paths into an instance:
+  -b, --bash [<name>]     its bash.exe
+  --python [<name>]       its python3, the real .exe rather than the symlink
+  --home [<name>]         its /home/<user>; exit 1 if that does not exist
+  --user <who>            whose home, for --home (default: $USER)
 
 Path form, spelled as cygpath spells it and handed to cygpath to apply. Any
-of them alone prints the instance's own path; with --bash, its bash.exe:
+of them alone prints the instance's own path; with one of the four above, it
+sets the form that one comes out in:
   -u, --unix [<name>]     /c/-/rhel/root      (the default)
   -w, --windows [<name>]  C:\\-\\rhel\\root
   -m, --mixed [<name>]    C:/-/rhel/root
@@ -359,12 +417,15 @@ def main(argv=None):
 
     mode = None          # None means --status
     fmt = None           # a cygpath format flag, applied by cygpath itself
+    user = None
     names = []
     dry = verbose = debug = False
 
     flag_modes = {'--status': 'status', '--which': 'which',
                   '-l': 'list', '--list': 'list',
                   '-b': 'bash', '--bash': 'bash',
+                  '--python': 'python', '--home': 'home',
+                  '--exists': 'exists',
                   '--default': 'default', '--clear': 'clear',
                   '--install': 'install'}
     # cygpath's three useful letters, spelled its way, and nothing else: this
@@ -399,6 +460,13 @@ def main(argv=None):
                                  'than the one already given; pick one\n' % a)
                 return GAP
             fmt = type_flags[a]
+        elif a == '--user':
+            if i + 1 >= len(argv):
+                sys.stderr.write('cygroot: --user wants a name\n')
+                sys.stderr.write('   RUN: cygroot --help\n')
+                return GAP
+            i += 1
+            user = argv[i]
         elif a in flag_modes:
             if mode is not None and mode != flag_modes[a]:
                 sys.stderr.write('cygroot: %s and --%s ask for different '
@@ -421,7 +489,7 @@ def main(argv=None):
                                          '(unset)'))
 
     try:
-        return _dispatch(mode, fmt, names, out, dry, verbose)
+        return _dispatch(mode, fmt, names, out, dry, verbose, user)
     except CygrootError:
         e = sys.exc_info()[1]
         sys.stderr.write('cygroot: %s\n' % e.what)
@@ -448,7 +516,23 @@ def _one(names, roots):
     return resolve(here, roots)
 
 
-def _dispatch(mode, fmt, names, out, dry, verbose):
+def _dispatch(mode, fmt, names, out, dry, verbose, user=None):
+    if mode == 'exists':
+        # A predicate, so it answers in the exit status and says nothing.
+        # Never raises for the case it exists to test.
+        try:
+            roots = known_roots()
+        except CygrootError:
+            return WARN
+        if names:
+            known = [r[0].lower() for r in roots]
+            hit = all(n.lower() in known for n in names)
+        else:
+            hit = this_root_name(roots) is not None
+        if verbose:
+            out('%s' % ('yes' if hit else 'no'))
+        return OK if hit else WARN
+
     if mode is None and fmt is not None:
         mode = 'path'                   # a format flag alone asks for a path
     if mode in (None, 'status'):
@@ -498,11 +582,25 @@ def _dispatch(mode, fmt, names, out, dry, verbose):
     # so -m and --dos behave exactly as they do everywhere else on the box.
     roots = known_roots()
     _name, _win, posix = _one(names, roots)
-    target = posix + '/bin/bash.exe' if mode == 'bash' else posix
-    if mode == 'bash' and fmt is None:
-        fmt = '-w'          # what a Windows-side caller is asking for
+    rc = OK
+    if mode == 'bash':
+        target = os.path.join(posix, 'bin', 'bash.exe')
+        fmt = fmt or '-w'   # what a Windows-side caller is asking for
+    elif mode == 'python':
+        target = interpreter_of(posix)
+        fmt = fmt or '-w'
+    elif mode == 'home':
+        target = home_of(posix, user)
+        # Printed either way. Where it went is the useful half of the answer
+        # even when it is not there, and the status carries the rest.
+        if not os.path.isdir(target):
+            rc = WARN
+            if verbose:
+                sys.stderr.write('cygroot: no such directory: %s\n' % target)
+    else:
+        target = posix
     sys.stdout.write('%s\n' % cygpath(fmt or '-u', target))
-    return OK
+    return rc
 
 
 def _set(names, out, dry, verbose):
