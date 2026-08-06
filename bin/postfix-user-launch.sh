@@ -60,6 +60,44 @@ queue_dir()  { postconf -c "$CONFIG_DIR" -h queue_directory 2>/dev/null; }
 master_pid() { head -1 "$(queue_dir)/pid/master.pid" 2>/dev/null | tr -dc '0-9'; }
 is_running() { local pid; pid=$(master_pid); [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }
 
+# master.pid is bookkeeping, and on 2026-08-05 it lied in both directions on the
+# same day: "stopped" against a live master on ins-15, where the file belonged to
+# a service-era master this script no longer tracks, and "already running"
+# against a dead one on the client, where the recorded pid had been reused by
+# something else and kill -0 was happy to confirm it. Neither answer cost
+# nothing -- the first invites a second master onto a queue that already has
+# one, which is how that instance ended up with stale sockets in
+# public/ and private/ and three daemons timing out.
+#
+# So ask the port. A listener answering 220 is the only evidence that matters to
+# a caller, since that is what submitting mail actually needs.
+smtp_port() {
+	local svc port
+	svc=$(postconf -c "$CONFIG_DIR" -M 2>/dev/null | awk '$2=="inet"{print $1; exit}')
+	port=${svc##*:}
+	case $port in *[!0-9]*|'')
+		port=$(python3 -c "import socket,sys; print(socket.getservbyname(sys.argv[1]))" "$port" 2>/dev/null) ;;
+	esac
+	case $port in *[!0-9]*|'') port=25 ;; esac
+	printf '%s\n' "$port"
+}
+
+answering() {
+	local port
+	port=${1:-$(smtp_port)}
+	python3 - "$port" <<'PY' 2>/dev/null
+import socket, sys
+try:
+    s = socket.create_connection(('127.0.0.1', int(sys.argv[1])), 3)
+    s.settimeout(3)
+    banner = s.recv(64).decode('utf-8', 'replace')
+    s.close()
+except Exception:
+    sys.exit(1)
+sys.exit(0 if banner.startswith('220') else 1)
+PY
+}
+
 # Why did master fail to come up? master owns the inet listener sockets and
 # routes its own fatals through postlogd, which is not up yet at startup, so an
 # early bind failure never reaches maillog. The port probe is what actually
@@ -101,7 +139,23 @@ finally: s.close()" 2>&1
 }
 
 do_start() {
-	if is_running; then say "postfix already running ($CONFIG_DIR, pid $(master_pid))"; return 0; fi
+	local port
+	port=$(smtp_port)
+	# The port first. Starting a second master onto a queue that already has one
+	# is the expensive mistake here, and the pid file cannot rule it out: an
+	# untracked master answers :25 while master.pid says nothing at all.
+	if answering "$port"; then
+		if is_running; then
+			say "postfix already running ($CONFIG_DIR, pid $(master_pid))"
+		else
+			say "postfix already answering on :$port ($CONFIG_DIR), though master.pid does not name a live pid -- not starting a second master"
+		fi
+		return 0
+	fi
+	if is_running; then
+		say "master.pid names live pid $(master_pid) but nothing answers :$port -- reaping it before starting"
+		do_stop >/dev/null 2>&1 || true
+	fi
 	local log
 	log=$(postconf -c "$CONFIG_DIR" -h maillog_file 2>/dev/null)
 	[ -n "$log" ] || log=/var/log/maillog
@@ -115,7 +169,9 @@ do_start() {
 	# already clean here; the session was the missing piece.
 	setsid "$MASTER" -c "$CONFIG_DIR" -d >>"$log" 2>&1 </dev/null &
 	sleep 2
-	if is_running; then
+	# Either signal is enough to call it up. A master that bound the port but
+	# has not written master.pid yet is started; so is one whose pid we have.
+	if answering "$port" || is_running; then
 		say "postfix started ($CONFIG_DIR, pid $(master_pid))"
 	else
 		err "failed to start; maillog is often empty here (see below for why)"
@@ -156,5 +212,20 @@ case $ACTION in
 	start)   do_start ;;
 	stop)    do_stop ;;
 	restart) do_stop; sleep 1; do_start ;;
-	status)  if is_running; then say "running (pid $(master_pid))"; exit 0; else say "stopped"; exit 1; fi ;;
+	# The listener is the verdict and the pid file is a detail, so a disagreement
+	# between them is reported rather than resolved silently -- it is the single
+	# most useful thing this command can say, and both directions have happened.
+	status)
+		port=$(smtp_port)
+		if answering "$port"; then
+			if is_running; then say "running (pid $(master_pid), :$port answering)"
+			else say "running (:$port answering, but master.pid names no live pid -- untracked master)"; fi
+			exit 0
+		fi
+		if is_running; then
+			say "stopped (master.pid names live pid $(master_pid), but nothing answers :$port)"
+			exit 1
+		fi
+		say "stopped"
+		exit 1 ;;
 esac
