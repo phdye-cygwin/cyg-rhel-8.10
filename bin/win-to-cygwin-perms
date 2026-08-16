@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Fix zero-permission files and directories left behind by Windows.
+
+Windows-created files show up to Cygwin with an empty mode (all permission
+bits clear), so `ls -l` prints them as `----------`. Nothing can read or
+traverse them until the mode is repaired. This walks a tree, finds those
+entries, and gives directories a+rx (0555) and files a+r (0444) -- the same
+result as `chmod a+rx` on the dirs and `chmod a+r` on the files.
+
+Only entries whose permission bits are exactly zero are touched. Anything
+already carrying some mode is left alone, so re-running is safe and cheap.
+Symlinks are neither followed nor modified: chmod on a symlink hits its
+target on most platforms, and following one can walk straight out of the
+tree you named.
+
+Relocated into cyg-rhel-8.10 from a personal ~/.local/bin copy: a fresh
+CI-provisioned replica never sees personal shims, only what this repo
+checks out, so anything replica/CI actually needs has to live here, not
+in a personal tree. The personal copy remains for ad-hoc interactive use.
+
+Written for Python 3.2.5. That rules out pathlib, os.scandir, and
+f-strings; os.walk plus os.lstat/os.chmod carry the whole job.
+"""
+
+import os
+import stat
+import sys
+import argparse
+
+# a+rx for directories, a+r for files. These are OR'd onto the existing mode
+# so the operation matches chmod's additive semantics, even though the only
+# entries we act on start at zero.
+DIR_BITS = stat.S_IRUSR | stat.S_IXUSR \
+    | stat.S_IRGRP | stat.S_IXGRP \
+    | stat.S_IROTH | stat.S_IXOTH        # 0o555
+FILE_BITS = stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH   # 0o444
+
+
+def is_zero_mode(st):
+    """True when the entry carries no permission bits at all."""
+    return stat.S_IMODE(st.st_mode) == 0
+
+
+def fix_entry(path, add_bits, dry_run, verbose, stats):
+    """Repair one path if it needs it. Symlinks are skipped by the caller,
+    but we lstat here too so a race (entry becomes a link) can't fool us."""
+    try:
+        st = os.lstat(path)
+    except OSError as exc:
+        sys.stderr.write("stat failed: %s: %s\n" % (path, exc.strerror))
+        stats["errors"] += 1
+        return
+
+    if stat.S_ISLNK(st.st_mode):
+        stats["skipped_links"] += 1
+        return
+
+    if not is_zero_mode(st):
+        return
+
+    new_mode = stat.S_IMODE(st.st_mode) | add_bits
+    if dry_run:
+        stats["would_fix"] += 1
+        print("would chmod %04o  %s" % (new_mode, path))
+        return
+
+    try:
+        os.chmod(path, new_mode)
+    except OSError as exc:
+        sys.stderr.write("chmod failed: %s: %s\n" % (path, exc.strerror))
+        stats["errors"] += 1
+        return
+
+    stats["fixed"] += 1
+    if verbose:
+        print("chmod %04o  %s" % (new_mode, path))
+
+
+def walk_error(exc):
+    """os.walk swallows errors by default; surface them instead."""
+    sys.stderr.write("walk error: %s\n" % exc)
+
+
+def run(root, dry_run, verbose, stats):
+    # Fix the root itself first -- os.walk reports it as a container, never as
+    # one of its own children, so it would otherwise slip through.
+    if os.path.isdir(root) and not os.path.islink(root):
+        fix_entry(root, DIR_BITS, dry_run, verbose, stats)
+
+    # followlinks stays False so a symlinked directory is never descended.
+    for dirpath, dirnames, filenames in os.walk(
+            root, topdown=True, onerror=walk_error, followlinks=False):
+        for name in dirnames:
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                stats["skipped_links"] += 1
+                continue
+            fix_entry(full, DIR_BITS, dry_run, verbose, stats)
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            # filenames includes symlinks to files and broken links; fix_entry
+            # re-checks and skips them, so no extra guard is needed here.
+            fix_entry(full, FILE_BITS, dry_run, verbose, stats)
+
+
+def main(argv):
+    parser = argparse.ArgumentParser(
+        description="Repair zero-permission files and directories under a "
+                    "tree: a+rx on directories, a+r on files.")
+    parser.add_argument(
+        "path", nargs="+",
+        help="one or more directories (or files) to repair, recursively")
+    parser.add_argument(
+        "-n", "--dry-run", action="store_true",
+        help="report what would change without touching anything")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="print every entry that is repaired")
+    args = parser.parse_args(argv)
+
+    stats = {"fixed": 0, "would_fix": 0, "skipped_links": 0, "errors": 0}
+
+    for root in args.path:
+        if not os.path.exists(root) and not os.path.islink(root):
+            sys.stderr.write("no such path: %s\n" % root)
+            stats["errors"] += 1
+            continue
+        if os.path.isdir(root) and not os.path.islink(root):
+            run(root, args.dry_run, args.verbose, stats)
+        else:
+            # A single file (or a symlink) named directly on the command line.
+            fix_entry(root, FILE_BITS, args.dry_run, args.verbose, stats)
+
+    if args.dry_run:
+        print("dry run: %d would be fixed, %d symlinks skipped, %d errors"
+              % (stats["would_fix"], stats["skipped_links"], stats["errors"]))
+    else:
+        print("fixed %d, skipped %d symlinks, %d errors"
+              % (stats["fixed"], stats["skipped_links"], stats["errors"]))
+
+    # Nonzero exit only when something actually failed, so scripts can trust it.
+    return 1 if stats["errors"] else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
