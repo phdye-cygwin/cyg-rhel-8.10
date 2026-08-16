@@ -1,0 +1,107 @@
+name: replica
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  establish-and-verify:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      REPLICA_BASE: C:\cyg-rhel-8.10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute POSIX workspace path
+        shell: pwsh
+        run: |
+          $ws = $env:GITHUB_WORKSPACE
+          $drive = $ws.Substring(0,1).ToLower()
+          $rest = $ws.Substring(2) -replace '\\','/'
+          $posix = "/cygdrive/$drive$rest"
+          Write-Host "POSIX workspace: $posix"
+          "POSIX_WORKSPACE=$posix" >> $env:GITHUB_ENV
+
+      - name: Restore Cygwin base cache
+        id: cache-base
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.REPLICA_BASE }}
+          key: cygwin-base-${{ hashFiles('install-all.ps1') }}
+
+      - name: Install replica base (no admin)
+        if: steps.cache-base.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          .\install-all.ps1 -Base "$env:REPLICA_BASE" -NoStart -NoShortcut -NoPause -NoCapture
+
+      - name: Install RHEL-parity packages
+        shell: pwsh
+        run: |
+          $bash = "$env:REPLICA_BASE\cygwin64\bin\bash.exe"
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && bin/install-packages.sh -v"
+          if ($LASTEXITCODE -ne 0) { throw "install-packages.sh exited $LASTEXITCODE" }
+
+      - name: Verify replica matches doc/replica-definition.md
+        shell: pwsh
+        run: |
+          $bash = "$env:REPLICA_BASE\cygwin64\bin\bash.exe"
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && bin/verify-replica.sh -v"
+          if ($LASTEXITCODE -ne 0) { throw "verify-replica.sh exited $LASTEXITCODE" }
+
+      - name: Configure Postfix (unprivileged)
+        shell: pwsh
+        run: |
+          $bash = "$env:REPLICA_BASE\cygwin64\bin\bash.exe"
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && bin/postfix-user-setup.sh -v"
+          if ($LASTEXITCODE -ne 0) { throw "postfix-user-setup.sh exited $LASTEXITCODE" }
+
+      - name: Launch Postfix and confirm it is running
+        shell: pwsh
+        run: |
+          $bash = "$env:REPLICA_BASE\cygwin64\bin\bash.exe"
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && bin/postfix-user-launch.sh start -v"
+          if ($LASTEXITCODE -ne 0) { throw "postfix-user-launch.sh start exited $LASTEXITCODE" }
+          Start-Sleep -Seconds 3
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && bin/postfix-user-launch.sh status -v"
+          if ($LASTEXITCODE -ne 0) { throw "postfix is not running after start" }
+
+      - name: Run isolated mail-delivery smoke test
+        shell: pwsh
+        run: |
+          $bash = "$env:REPLICA_BASE\cygwin64\bin\bash.exe"
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && test/test-unprivileged-postfix.sh"
+          if ($LASTEXITCODE -ne 0) { throw "test-unprivileged-postfix.sh exited $LASTEXITCODE" }
+
+      - name: Stop Postfix
+        if: always()
+        shell: pwsh
+        run: |
+          $bash = "$env:REPLICA_BASE\cygwin64\bin\bash.exe"
+          & $bash -c "cd '$env:POSIX_WORKSPACE' && bin/postfix-user-launch.sh stop -v"
+        continue-on-error: true
+
+      - name: Collect diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'diag'
+          New-Item -ItemType Directory -Force -Path $diag | Out-Null
+          Copy-Item "$env:REPLICA_BASE\cygwin64\var\log\setup.log.full" $diag -ErrorAction SilentlyContinue
+          Copy-Item "$env:REPLICA_BASE\cygwin64\var\log\maillog" $diag -ErrorAction SilentlyContinue
+          Copy-Item "$env:REPLICA_BASE\cygwin64\etc\postfix\main.cf" $diag -ErrorAction SilentlyContinue
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: replica-diagnostics
+          path: ${{ runner.temp }}/diag
+          if-no-files-found: ignore
+          retention-days: 14
