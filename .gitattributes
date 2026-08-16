@@ -1,0 +1,16 @@
+# Force LF for everything this repo executes as a script, regardless of the
+# checking-out git client's core.autocrlf. Discovered the hard way: a
+# windows-latest Actions runner's git defaults to autocrlf=true, silently
+# rewriting these to CRLF on checkout with no .gitattributes to stop it --
+# the stored blobs were already clean LF, only the runner's checkout wasn't.
+
+*.sh          text eol=lf
+*.cygport     text eol=lf
+*.py          text eol=lf
+DEPENDENCIES.lock text eol=lf
+bin/sendmail-smtp-shim text eol=lf
+
+*.tar.gz  binary
+*.tar.xz  binary
+*.ico     binary
+*.png     binary
