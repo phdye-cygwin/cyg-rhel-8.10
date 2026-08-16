@@ -122,6 +122,7 @@ for pkg in "${sections[@]}"; do
 		remote_repo=$(get_field "${pkg}" remote_repo)
 		remote_ref=$(get_field "${pkg}" remote_ref)
 		local_cygport=$(get_field "${pkg}" local_cygport)
+		local_packages=$(get_field "${pkg}" local_packages)
 
 		if [ -z "${remote_ref}" ]; then
 			echo "${PROG}: ${pkg}: mode=remote but remote_ref is empty, refusing" >&2
@@ -129,12 +130,32 @@ for pkg in "${sections[@]}"; do
 			continue
 		fi
 
-		clone_cmd="git clone --depth 1 --branch ${remote_ref} https://github.com/${remote_repo}.git ${local_cygport}"
+		if [ ! -d "${local_packages}" ]; then
+			echo "${PROG}: ${pkg}: missing built-package cache ${local_packages}" >&2
+			status=1
+			continue
+		fi
+
+		if [ -d "${local_cygport}" ]; then
+			if [ "${VERBOSE}" -ge 1 ]; then
+				log "${PROG}: ${pkg}: remote, source present (${local_cygport}, pinned ${remote_repo}@${remote_ref})"
+			else
+				log "${PROG}: ${pkg}: remote, ok"
+			fi
+			continue
+		fi
+
+		clone_url="https://github.com/${remote_repo}.git"
 		if [ "${DRY_RUN}" -eq 1 ]; then
-			log "${PROG}: ${pkg}: dry-run, would run: ${clone_cmd}"
+			log "${PROG}: ${pkg}: remote, ok (no local source; dry-run, would run: git clone --depth 1 ${clone_url} ${local_cygport} && verify HEAD == ${remote_ref})"
 		else
 			log "${PROG}: ${pkg}: fetching ${remote_repo}@${remote_ref}"
-			eval "${clone_cmd}"
+			git clone --depth 1 "${clone_url}" "${local_cygport}"
+			fetched_commit=$(git -C "${local_cygport}" rev-parse HEAD)
+			if [ "${fetched_commit}" != "${remote_ref}" ]; then
+				echo "${PROG}: ${pkg}: fetched HEAD ${fetched_commit} does not match pinned ${remote_ref} (repo moved since the pin was recorded)" >&2
+				status=1
+			fi
 		fi
 
 	else
