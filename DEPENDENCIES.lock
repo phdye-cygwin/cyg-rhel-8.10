@@ -1,0 +1,42 @@
+# DEPENDENCIES.lock
+#
+# Pinned build inputs for the two RHEL-parity packages this replica ships:
+# postfix (3.5.8, matching postfix-3.5.8-7.el8) and heirloom-mailx (12.5,
+# matching RHEL 8.10's mailx package). Each package has a mode:
+#
+#   vendored  source, patches, and cygport recipe live in this repo, under
+#             cygport/<name> and packages/<name>. Current state for both.
+#   remote    source lives in a separate phdye-cygwin/<name> repo, pinned
+#             by commit. bin/resolve-pinned-deps.sh fetches by that pin
+#             instead of reading the local copy.
+#
+# Switching a package from vendored to remote is meant to be a one-line
+# change here (set mode, remote_ref) plus removing its local cygport/ and
+# packages/ directories, once phdye-cygwin/<name> exists and carries the
+# same content at the pinned commit. Neither remote repo exists yet.
+#
+# Run bin/resolve-pinned-deps.sh after touching either package's cygport/
+# or packages/ tree, to catch a stale vendored_commit before it is
+# committed.
+
+[postfix]
+mode            = vendored
+local_cygport   = cygport/postfix
+local_packages  = packages/postfix
+vendored_commit = 0e6a4cc20fdd078745912b4a743460808a30fb31
+upstream_src    = ftp://ftp.porcupine.org/mirrors/postfix-release/official/postfix-3.5.8.tar.gz
+upstream_sha256 = 22582628cf3edc18c5155c9ff44543dd95a9435fb68135d76a99f572cb07456f
+patch_file      = postfix-3.5.8-1-cygwinport.patch
+remote_repo     = phdye-cygwin/postfix
+remote_ref      =
+
+[heirloom-mailx]
+mode            = vendored
+local_cygport   = cygport/heirloom-mailx
+local_packages  = packages/heirloom-mailx
+vendored_commit = 0e6a4cc20fdd078745912b4a743460808a30fb31
+upstream_src    = https://sources.stream.centos.org/sources/rpms/mailx/mailx-12.5.tar.xz/836bf1da322d2d1f78b7056c2b3b2304/mailx-12.5.tar.xz
+upstream_md5    = 836bf1da322d2d1f78b7056c2b3b2304
+patch_files     = 0011-outof-Introduce-expandaddr-flag.patch 0012-unpack-Disable-option-processing-for-email-addresses.patch 0013-fio.c-Unconditionally-require-wordexp-support.patch 0014-globname-Invoke-wordexp-with-WRDE_NOCMD.patch
+remote_repo     = phdye-cygwin/heirloom-mailx
+remote_ref      =

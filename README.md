@@ -122,6 +122,14 @@ Both were built against the Cygwin 3.0.7, gcc 7.4.0, and openssl 1.1.1c the
 snapshot provides, so they drop straight in. To rebuild from source instead, the
 cygports and patches are under `cygport/`.
 
+`DEPENDENCIES.lock` records what makes those two packages reproducible: the
+upstream source URL and checksum, the patch files, and the commit that last
+touched each package's `cygport/` tree. Run `bin/resolve-pinned-deps.sh` after
+touching either package, to catch a stale lock file before it is committed. The
+lock file also carries a `remote` mode for the day either package moves to its
+own repo and this one starts pinning to it by commit instead of vendoring a
+copy; neither has moved yet, so both stay `vendored`.
+
 Configure Postfix to run as you. `bin/postfix-user-setup.sh` sets `mail_owner` to
 your account, binds smtpd to `127.0.0.1:25`, creates the queue directories, and
 installs the sendmail shim. It also seeds `/etc/aliases` and builds its database,
@@ -161,6 +169,8 @@ install-all.cmd              wrapper so install-all.ps1 runs from cmd or a click
 install-all.sh               one-shot harness from an existing Cygwin shell
 install-rhel810-noadmin.sh   setup wrapper (--no-admin, configurable root)
 site-local.example.ps1       template for per-site paths and log dir (copy to site-local.ps1)
+DEPENDENCIES.lock             pinned build inputs for postfix + heirloom-mailx
+bin/resolve-pinned-deps.sh    verify (or later, fetch) the pins in DEPENDENCIES.lock
 bin/install-packages.sh      unpack built postfix + mailx into the tree
 bin/postfix-user-setup.sh     configure Postfix to run as your user
 bin/postfix-user-launch.sh    start/stop/restart/status the master, no service manager
