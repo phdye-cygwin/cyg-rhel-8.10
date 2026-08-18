@@ -1,0 +1,120 @@
+name: 'Set up Cygwin RHEL 8.10 replica'
+description: >
+  Install a Cygwin tree pinned to the 2019-08-01 Time Machine snapshot whose
+  tool versions line up with RHEL 8.10, add the RHEL-parity packages built by
+  this repo, and assert conformance against doc/replica-definition.md.
+
+inputs:
+  install-dir:
+    description: Absolute path to install the replica into
+    required: false
+    default: ''
+  packages:
+    description: >
+      Extra Cygwin packages to install, comma separated, appended to the
+      pinned base set. The base set is not overridable: it is what
+      replica-definition.md is written against.
+    required: false
+    default: ''
+  parity-packages:
+    description: >
+      Install the RHEL-parity packages built by this repo (postfix 3.5.8,
+      heirloom-mailx 12.5) from packages/.
+    required: false
+    default: 'true'
+  verify:
+    description: Run bin/verify-replica.sh and fail the job on any mismatch
+    required: false
+    default: 'true'
+  allow-test-packages:
+    description: >
+      Consider package versions marked test. Needed to reach gcc 8.3.0, which
+      is closer to RHEL 8.10's 8.5.0 than the default 7.4.0, but which is a
+      test package in this snapshot.
+    required: false
+    default: 'false'
+  add-to-path:
+    description: Add the replica's /usr/bin to the system PATH
+    required: false
+    default: 'true'
+
+outputs:
+  root:
+    description: Root directory of the installed replica
+    value: ${{ steps.install.outputs.root }}
+  setup:
+    description: Pathname of the Cygwin setup executable
+    value: ${{ steps.install.outputs.setup }}
+  package-cache:
+    description: Package cache directory
+    value: ${{ steps.install.outputs.package-cache }}
+
+runs:
+  using: composite
+  steps:
+    # The snapshot URL and base package list are read out of the installer
+    # script rather than repeated here. Two copies would drift, and the
+    # script is what a non-CI install uses.
+    - id: pins
+      shell: pwsh
+      run: |
+        $script = Join-Path $Env:GITHUB_ACTION_PATH 'install-rhel810-noadmin.sh'
+        if (-not (Test-Path $script)) { throw "not found: $script" }
+        $text = Get-Content $script -Raw
+
+        if ($text -notmatch "(?m)^DEF_SNAPSHOT='([^']+)'") {
+          throw "could not read DEF_SNAPSHOT from $script"
+        }
+        $snapshot = $Matches[1]
+
+        if ($text -notmatch "(?m)^DEF_PKGS='([^']+)'") {
+          throw "could not read DEF_PKGS from $script"
+        }
+        $packages = $Matches[1]
+
+        $extra = "${{ inputs.packages }}".Trim()
+        if ($extra) { $packages = "$packages,$extra" }
+
+        Write-Host "snapshot: $snapshot"
+        Write-Host "packages: $(($packages -split ',').Count) requested"
+        "snapshot=$snapshot" >> $Env:GITHUB_OUTPUT
+        "packages=$packages" >> $Env:GITHUB_OUTPUT
+
+    # check-sig is false because the archived setup.ini in a Time Machine
+    # snapshot is unsigned. This is the documented Time Machine case, and is
+    # the action's equivalent of setup.exe -X.
+    - id: install
+      uses: cygwin/cygwin-install-action@v6
+      with:
+        site: ${{ steps.pins.outputs.snapshot }}
+        check-sig: 'false'
+        packages: ${{ steps.pins.outputs.packages }}
+        install-dir: ${{ inputs.install-dir }}
+        allow-test-packages: ${{ inputs.allow-test-packages }}
+        add-to-path: ${{ inputs.add-to-path }}
+
+    - name: Install RHEL-parity packages
+      if: inputs.parity-packages == 'true'
+      shell: pwsh
+      run: |
+        $bash = Join-Path '${{ steps.install.outputs.root }}' 'bin\bash.exe'
+        $here = & $bash -c "cygpath -u '$Env:GITHUB_ACTION_PATH'"
+        & $bash -lc "cd '$here' && bin/install-packages.sh -v"
+        if ($LASTEXITCODE -ne 0) {
+          throw "install-packages.sh exited $LASTEXITCODE"
+        }
+
+    - name: Verify against replica-definition.md
+      if: inputs.verify == 'true'
+      shell: pwsh
+      run: |
+        $bash = Join-Path '${{ steps.install.outputs.root }}' 'bin\bash.exe'
+        $here = & $bash -c "cygpath -u '$Env:GITHUB_ACTION_PATH'"
+        & $bash -lc "cd '$here' && bin/verify-replica.sh -v"
+        if ($LASTEXITCODE -ne 0) {
+          throw "replica does not match doc/replica-definition.md (exit $LASTEXITCODE)"
+        }
+
+branding:
+  color: red
+  icon: server
